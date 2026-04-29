@@ -56,6 +56,7 @@ type Message struct {
 	Text        string
 	DisplayText string
 	MediaType   string
+	LocalPath   string `json:",omitempty"`
 	Snippet     string
 	rowID       int64
 }

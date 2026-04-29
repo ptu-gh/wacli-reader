@@ -1,6 +1,7 @@
 package store
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -229,6 +230,88 @@ func TestMediaDownloadInfoAndMarkDownloaded(t *testing.T) {
 	}
 	if !info.DownloadedAt.Equal(when) {
 		t.Fatalf("expected DownloadedAt=%s, got %s", when, info.DownloadedAt)
+	}
+}
+
+func TestListAndGetMessagePopulateLocalPath(t *testing.T) {
+	db := openTestDB(t)
+
+	chat := "media-chat@s.whatsapp.net"
+	if err := db.UpsertChat(chat, "dm", "Alice", time.Now()); err != nil {
+		t.Fatalf("UpsertChat: %v", err)
+	}
+	ts := time.Date(2024, 5, 1, 0, 0, 0, 0, time.UTC)
+	if err := db.UpsertMessage(UpsertMessageParams{
+		ChatJID:   chat,
+		MsgID:     "with-media",
+		SenderJID: chat,
+		Timestamp: ts,
+		MediaType: "image",
+		Filename:  "pic.jpg",
+		MimeType:  "image/jpeg",
+	}); err != nil {
+		t.Fatalf("UpsertMessage media: %v", err)
+	}
+	if err := db.UpsertMessage(UpsertMessageParams{
+		ChatJID:   chat,
+		MsgID:     "no-media",
+		SenderJID: chat,
+		Timestamp: ts.Add(time.Second),
+		Text:      "hi",
+	}); err != nil {
+		t.Fatalf("UpsertMessage text: %v", err)
+	}
+	if err := db.MarkMediaDownloaded(chat, "with-media", "/tmp/wacli/pic.jpg", ts.Add(time.Minute)); err != nil {
+		t.Fatalf("MarkMediaDownloaded: %v", err)
+	}
+
+	got, err := db.GetMessage(chat, "with-media")
+	if err != nil {
+		t.Fatalf("GetMessage media: %v", err)
+	}
+	if got.LocalPath != "/tmp/wacli/pic.jpg" {
+		t.Fatalf("GetMessage LocalPath = %q, want /tmp/wacli/pic.jpg", got.LocalPath)
+	}
+
+	got, err = db.GetMessage(chat, "no-media")
+	if err != nil {
+		t.Fatalf("GetMessage text: %v", err)
+	}
+	if got.LocalPath != "" {
+		t.Fatalf("text-only LocalPath = %q, want empty", got.LocalPath)
+	}
+
+	msgs, err := db.ListMessages(ListMessagesParams{ChatJID: chat, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	byID := map[string]Message{}
+	for _, m := range msgs {
+		byID[m.MsgID] = m
+	}
+	if byID["with-media"].LocalPath != "/tmp/wacli/pic.jpg" {
+		t.Fatalf("ListMessages with-media LocalPath = %q", byID["with-media"].LocalPath)
+	}
+	if byID["no-media"].LocalPath != "" {
+		t.Fatalf("ListMessages no-media LocalPath = %q, want empty", byID["no-media"].LocalPath)
+	}
+}
+
+func TestMessageJSONOmitsEmptyLocalPath(t *testing.T) {
+	empty, err := json.Marshal(Message{ChatJID: "x", MsgID: "y"})
+	if err != nil {
+		t.Fatalf("marshal empty: %v", err)
+	}
+	if strings.Contains(string(empty), "LocalPath") {
+		t.Fatalf("expected LocalPath to be omitted when empty, got %s", empty)
+	}
+
+	set, err := json.Marshal(Message{ChatJID: "x", MsgID: "y", LocalPath: "/tmp/file"})
+	if err != nil {
+		t.Fatalf("marshal set: %v", err)
+	}
+	if !strings.Contains(string(set), `"LocalPath":"/tmp/file"`) {
+		t.Fatalf("expected LocalPath in JSON, got %s", set)
 	}
 }
 
