@@ -1,259 +1,67 @@
-# wacli specification (plan)
+# wacli-reader specification
 
-This document defines the v1 plan for `wacli`: a WhatsApp CLI that syncs messages locally, supports fast search, sending, and contact/group management. Implementation will use `whatsmeow` under the hood.
+`wacli-reader` is a heavily trimmed, agent-safe fork of [`wacli`](https://github.com/steipete/wacli), forked at upstream **`v0.7.0`**. It exposes only commands that read a `wacli.db` produced by the upstream writer; it never authenticates with WhatsApp, never opens `session.db`, and opens the SQLite store with `mode=ro` so writes are rejected at the driver layer.
+
+The full client/storage spec — auth model, sync model, send pipeline, schema design — lives in upstream `wacli`'s `docs/spec.md` and is implicitly inherited here. This document covers only what is *different* in `wacli-reader`.
 
 ## Goals
 
-- **Explicit authentication step**: `wacli auth` shows a QR code and completes login.
-- **Auth starts syncing immediately**: after successful QR pairing, `wacli auth` begins initial sync (history + metadata).
-- **Non-interactive sync**: `wacli sync` never displays a QR code; it fails with a clear error if not authenticated.
-- **Fast offline message search**: local SQLite + FTS5 index.
-- **Human-first output**: readable tables by default, `--json` opt-in for scripting.
-- **Single-instance safety**: store locking to avoid multi-instance session conflicts (device/session replacement issues).
-- **Group management**: list groups, inspect, rename, manage participants, invites.
-
-## Non-goals (v1)
-
-- Guaranteed full-history export (WhatsApp/WhatsApp Web history is best-effort).
-- End-to-end “contact creation” in WhatsApp (we can manage local aliases/notes; WhatsApp contacts are sourced from the account/device).
-- Full message-type parity (polls, reactions, ephemeral nuances, etc.) in v1.
-
-## Terminology
-
-- **JID**: WhatsApp Jabber ID, e.g. `1234567890@s.whatsapp.net` (user) or `123456789@g.us` (group).
-- **Store directory**: directory containing all local state, default `~/.local/state/wacli` on Linux and `~/.wacli` elsewhere.
-
-## Storage layout
-
-Default store: `~/.local/state/wacli` on Linux and `~/.wacli` elsewhere (override with `--store DIR`). Existing Linux `~/.wacli` stores are reused when the XDG state store does not exist.
-
-Proposed files:
-
-- `<store>/session.db` — `whatsmeow` SQL store (device identity, keys, app-state).
-- `<store>/wacli.db` — our SQLite DB (messages/chats, FTS, local metadata).
-- `<store>/media/...` — downloaded media (optional, on-demand or background).
-- `<store>/LOCK` — store lock to prevent concurrent access.
-
-Rationale for two SQLite files: reduce coupling and keep the `whatsmeow`-owned schema separate from `wacli`’s local schema. It’s still “one store directory” for the user.
-
-## Concurrency + locking
-
-Every command that accesses the WhatsApp session must acquire an exclusive lock in the store dir.
-
-Behavior:
-
-- If lock is held: fail fast with a clear message (include PID and start time if available).
-- This prevents running multiple `wacli` instances against the same WhatsApp device identity, which can cause disconnects or “device replaced” style failures.
-
-## Authentication model
-
-### Commands
-
-- `wacli auth` (interactive)
-  - If not authenticated: connect, show QR code, wait for success.
-  - After success: start initial sync (bootstrap) immediately.
-  - Exits after initial sync “goes idle” (configurable), unless `--follow` is set.
-
-- `wacli sync` (non-interactive)
-  - Requires an existing authenticated session in `session.db`.
-  - Never displays QR; if not authenticated, prints “run `wacli auth`”.
-  - `--once` performs a bounded sync and exits.
-  - Default (or `--follow`) stays connected and continues capturing messages.
-
-### UX principle
-
-Only `wacli auth` is expected to show a QR code. `wacli sync` should be safe to run in scripts/daemons without surprising interactivity.
-
-## Sync model (best-effort)
-
-`wacli` captures messages via `whatsmeow` event handlers:
-
-- `events.HistorySync`: initial/batch history sync delivered by WhatsApp Web.
-- `events.Message`: new incoming/outgoing messages while connected.
-- Connection lifecycle events (`Connected`, `Disconnected`) for logging/reconnect.
-
-### Bootstrap sync (after auth)
-
-Immediately after QR pairing success, `wacli auth` runs a bootstrap sync:
-
-- Processes history sync events and stores message metadata.
-- Updates chats, names, and contact-derived names as available.
-- Optionally starts media download worker (off by default, behind a flag).
-- Exits once “idle for N seconds” (no new history events) unless `--follow`.
-
-### Continuous sync
-
-`wacli sync --follow` keeps running:
-
-- persists new messages as they arrive
-- performs safe reconnect with backoff on disconnect
-- continues best-effort history catch-up when WhatsApp emits it
-
-## Database schema (wacli.db)
-
-### Tables (proposed)
-
-- `chats`
-  - `jid` (PK), `name`, `kind` (`dm|group|broadcast`), `last_message_ts`, …
-- `contacts`
-  - `jid` (PK), `push_name`, `full_name`, `business_name`, `phone`, …
-- `groups`
-  - `jid` (PK), `name`, `owner_jid`, `created_ts`, …
-- `messages`
-  - `rowid` (PK), `chat_jid`, `msg_id`, `sender_jid`, `ts`, `from_me`, `text`, `media_type`, `media_caption`, `filename`, `mime_type`, `direct_path`, hashes/keys, …
-  - unique constraint: (`chat_jid`, `msg_id`)
-- `contact_aliases` (local management)
-  - `jid` (PK/FK), `alias`, `notes`, `tags` (or join table)
-
-### Message search (FTS5)
-
-Use SQLite **FTS5** for fast full-text search.
-
-Approach:
-
-- Maintain canonical data in `messages`.
-- Maintain an FTS5 virtual table `messages_fts` (external content) indexing:
-  - message body text
-  - media caption
-  - document filename
-  - (optionally) denormalized sender/chat names for convenience
-
-Query behavior:
-
-- Default: `MATCH` queries (FTS syntax) with ranking via `bm25`.
-- Filters implemented in SQL: `--chat`, `--from`, `--after`, `--before`, `--has-media`, `--type`.
-- Human output includes snippets/highlights; `--json` returns structured matches + offsets/snippet string.
-
-Fallback:
-
-- If FTS5 is unavailable, fall back to `LIKE` with an explicit warning (slower).
-
-## CLI command surface (v1)
-
-Global flags:
-
-- `--store DIR` (default: XDG state dir on Linux, `~/.wacli` elsewhere)
-- `--json` (default: human text)
-- `--full` (disable table truncation; non-TTY output keeps full IDs)
-- `--timeout DURATION` (non-sync commands; e.g. `5m`)
-- `--lock-wait DURATION` (wait for the store lock before failing write commands)
-- `--read-only` (reject commands that intentionally write WhatsApp or the local store; also `WACLI_READONLY=1`)
-- `--version` (prints version and exits)
-
-### Doctor
-
-- `wacli doctor [--connect]`
-
-### Auth
-
-- `wacli auth [--follow] [--idle-exit 30s]`
-- `wacli auth status`
-- `wacli auth logout`
-
-### Sync
-
-- `wacli sync [--once] [--follow] [--download-media]`
-
-Notes:
-
-- `sync` errors if not authenticated (never prints QR).
-- `--download-media` runs a bounded/concurrent media downloader for messages that contain downloadable media metadata.
-
-### History backfill (best-effort)
-
-WhatsApp Web history is best-effort. If you want to try fetching *older* messages for a specific chat, `wacli` can send an on-demand history request to your primary device:
-
-- `wacli history backfill --chat JID [--count 50] [--requests N]`
-- Backfill caps: `--count <= 500`, `--requests <= 100`.
-
-### Messages
-
-- `wacli messages list [--chat JID] [--sender JID] [--from-me|--from-them] [--asc] [--limit N] [--before TS] [--after TS]`
-- `wacli messages search <query> [--chat JID] [--from JID] [--limit N] [--before TS] [--after TS] [--type text|image|video|audio|document]`
-- `wacli messages show --chat JID --id MSG_ID`
-- `wacli messages context --chat JID --id MSG_ID [--before N] [--after N]`
-
-### Send
-
-- `wacli send text --to PHONE_OR_JID --message TEXT`
-- `wacli send file --to PHONE_OR_JID --file PATH [--caption TEXT] [--mime TYPE]`
-- `wacli send react --to PHONE_OR_JID --id MSG_ID [--reaction TEXT] [--sender JID]`
-
-### Contacts (read + local management)
-
-- `wacli contacts search <query>`
-- `wacli contacts show --jid JID`
-- `wacli contacts refresh`
-- `wacli contacts alias set --jid JID --alias "Name"`
-- `wacli contacts alias rm --jid JID`
-- `wacli contacts tags add|rm --jid JID --tag TAG`
-
-### Chats
-
-- `wacli chats list [--query TEXT]`
-- `wacli chats show --jid JID`
-
-### Groups
-
-- `wacli groups list [--query TEXT]`
-- `wacli groups refresh`
-- `wacli groups info --jid GROUP_JID`
-- `wacli groups rename --jid GROUP_JID --name "New Name"`
-- `wacli groups participants add|remove --jid GROUP_JID --user PHONE_OR_JID [--user ...]`
-- `wacli groups participants promote|demote --jid GROUP_JID --user PHONE_OR_JID [--user ...]`
-- `wacli groups invite link get|revoke --jid GROUP_JID`
-- `wacli groups join --code INVITE_CODE`
-- `wacli groups leave --jid GROUP_JID`
-
-## Output formats
-
-Default: human-readable text (tables / aligned columns; TTY-aware wrapping).
-
-Optional:
-
-- `--json` prints `{"success":true,"data":...,"error":null}`-style responses.
-
-Recommendation:
-
-- Write logs/progress (sync counters, reconnect notices) to stderr.
-- Write primary command output to stdout.
-
-## Reliability considerations
-
-- **Session conflicts**: running multiple instances can cause disconnects or “device replaced” behavior; locking is mandatory.
-- **Reconnect**: on disconnect, retry with exponential backoff and respect context cancellation.
-- **Idempotency**: message inserts are upserts keyed by (`chat_jid`, `msg_id`) so replays/history sync don’t duplicate data.
-
-## Security considerations
-
-- Store contains encryption keys/session data; protect permissions:
-  - store dir `0700`
-  - DB files `0600`
-- Avoid printing sensitive identifiers in logs unless needed for debugging (`--verbose`).
-
-## Implementation milestones
-
-### v0.1 (MVP)
-
-- `auth` (QR + bootstrap sync)
-- `sync` (non-interactive, follow mode)
-- `messages list/search` with FTS5
-- `send text`
-- store locking, default state dir
-
-### v0.2
-
-- contacts: show + local alias/notes/tags
-- chats list/show with better naming resolution
-- groups list/info/rename/participants
-
-### v0.3
-
-- media download command + optional background downloader
-- `messages show/context` polish
-
-## Prior art / credit
-
-This spec borrows ideas and lessons learned from:
-
-- `https://github.com/vicentereig/whatsapp-cli`
+- **Agent-safe read access** to a `wacli.db` populated by upstream `wacli sync`.
+- **No `session.db` access**: the binary contains no code path that opens, reads, or writes `session.db`.
+- **No network I/O**: there is no whatsmeow client and no WhatsApp connectivity.
+- **Read-only at the SQLite layer**: the connection is opened `mode=ro`; any write attempt fails with `attempt to write a readonly database`.
+- **Concurrent with upstream writer**: an upstream `wacli sync --follow` may run against the same `wacli.db` while `wacli-reader` reads.
+- **Minimal diff vs. upstream**: the fork is intended to be rebased periodically. Surviving files keep upstream's structure as much as possible.
+
+## Non-goals
+
+- Authentication, message sending, reactions, media upload/download, presence indicators, history backfill, group/contact management. (All upstream commands that perform these have been removed.)
+- Schema evolution. The schema is owned by upstream `wacli`. `wacli-reader` does not run migrations; the upstream writer is expected to have created and migrated the database.
+- Re-enabling writes via flag, env var, or config file. There is no such switch.
+
+## Storage model
+
+- Directory: defaults to upstream's resolution (`WACLI_STORE_DIR` env → XDG state dir on Linux → `~/.wacli` elsewhere). `wacli-reader` does not create the directory.
+- File: `wacli.db` only. Upstream's `session.db` may sit alongside it on disk but is never read.
+- Open: `sql.Open("sqlite3", "file:<path>?mode=ro&_foreign_keys=on&_busy_timeout=5000")`.
+- FTS5: `messages_fts` virtual table is detected at open time. If absent, `messages search` falls back to `LIKE`.
+- WAL: WAL mode is configured by the upstream writer. Readers see consistent snapshots without blocking the writer.
+
+## CLI surface
+
+| Command | Description |
+| --- | --- |
+| `wacli-reader chats list [--query TEXT] [--limit N]` | List chats. |
+| `wacli-reader chats show --jid JID` | Show one chat. |
+| `wacli-reader contacts search <query> [--limit N]` | Search contacts. |
+| `wacli-reader contacts show --jid JID` | Show one contact. |
+| `wacli-reader groups list [--query TEXT] [--limit N]` | List groups. |
+| `wacli-reader messages list [filters]` | List messages. Filters: `--chat`, `--sender`, `--from-me`/`--from-them`, `--asc`, `--limit`, `--after`, `--before`. |
+| `wacli-reader messages search <query> [filters]` | FTS5 (or `LIKE`) message search. Filters: `--chat`, `--from`, `--has-media`, `--type`, `--limit`, `--after`, `--before`. |
+| `wacli-reader messages show --chat JID --id MSG_ID` | Show one message. |
+| `wacli-reader messages context --chat JID --id MSG_ID [--before N] [--after N]` | Show context around a message. |
+| `wacli-reader doctor` | Store dir, FTS flag, message/chat/contact/group counts. |
+| `wacli-reader version` | Print `wacli-reader <version>`. |
+| `wacli-reader help`, `wacli-reader completion <shell>` | Cobra built-ins. |
+
+Global flags: `--store DIR`, `--json`, `--full`, `--timeout DURATION`. Environment overrides: `WACLI_STORE_DIR`.
+
+## Concurrency
+
+- WAL + `mode=ro` + no lock acquisition. The reader can run while upstream `wacli sync --follow` is writing; SQLite handles isolation.
+- The reader does **not** create the `LOCK` file and does not block on it. The upstream writer's lock is irrelevant to this binary.
+
+## Safety properties
+
+1. The binary contains no code that opens `session.db`.
+2. The SQLite connection is opened with `mode=ro`; writes fail at the driver layer.
+3. There is no flag, env var, or config file that re-enables writes.
+4. `internal/wa` (whatsmeow client) and `internal/lock` are absent from the binary.
+5. The binary performs no network I/O.
+
+For defence in depth, pair `wacli-reader` with filesystem ACLs: give the consuming process read-only access to `wacli.db` and `wacli.db-wal`, and deny access to `session.db`.
+
+## Compatibility and rebase policy
+
+- Compatible with `wacli.db` produced by upstream `wacli` v0.7.0 and later.
+- The fork is rebased periodically on upstream. See `AGENTS.md` § "Rebasing on upstream wacli" for the conflict-resolution checklist.

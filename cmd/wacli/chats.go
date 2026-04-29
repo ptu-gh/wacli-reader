@@ -27,14 +27,14 @@ func newChatsListCmd(flags *rootFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List chats",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := withTimeout(context.Background(), flags)
+			_, cancel := withTimeout(context.Background(), flags)
 			defer cancel()
 
-			a, lk, err := newApp(ctx, flags, false, false)
+			a, err := newApp(flags)
 			if err != nil {
 				return err
 			}
-			defer closeApp(a, lk)
+			defer a.Close()
 
 			chats, err := a.DB().ListChats(query, limit)
 			if err != nil {
@@ -72,14 +72,14 @@ func newChatsShowCmd(flags *rootFlags) *cobra.Command {
 			if jid == "" {
 				return fmt.Errorf("--jid is required")
 			}
-			ctx, cancel := withTimeout(context.Background(), flags)
+			_, cancel := withTimeout(context.Background(), flags)
 			defer cancel()
 
-			a, lk, err := newApp(ctx, flags, false, false)
+			a, err := newApp(flags)
 			if err != nil {
 				return err
 			}
-			defer closeApp(a, lk)
+			defer a.Close()
 
 			c, err := a.DB().GetChat(jid)
 			if err != nil {

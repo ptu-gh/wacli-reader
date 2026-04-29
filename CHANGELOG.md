@@ -1,146 +1,75 @@
 # Changelog
 
-## 0.7.0 - Unreleased
+All notable changes to `wacli-reader` will be documented in this file. Format
+loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+`wacli-reader` carries its own version history, independent of the upstream
+[`wacli`](https://github.com/steipete/wacli) version it was forked from.
 
-### Added
+## [0.0.1] — initial fork from upstream wacli v0.7.0
 
-- CLI: add `--read-only`/`WACLI_READONLY` to reject commands that write WhatsApp or the local store.
-- CLI: add `--lock-wait` to wait for transient store locks before failing write commands.
-- CLI: add `--full` to disable table truncation; piped output now keeps full message IDs. (#13 — thanks @rickhallett)
-- CLI: add `presence typing` and `presence paused` commands for WhatsApp composing indicators. (#76 — thanks @redemerco)
-- Diagnostics: show linked JID and local store counts in `auth status` and `doctor`. (#149 — thanks @draix)
-- Messages: add `messages list --sender`, `--from-me`, `--from-them`, and `--asc` filters. (#153 — thanks @draix)
-- Messages: add `messages search --has-media`, `--type text`, case-insensitive media types, and validation for contradictory filters. (#128 — thanks @ImLukeF and @Mansehej)
-- Messages: extract searchable/display text from WhatsApp Business templates, buttons, interactive messages, and list replies. (#79 — thanks @terry-li-hm)
-- Send: add `send react` to add or clear reactions, with group sender validation. (#151 — thanks @draix)
+`wacli-reader` is a heavily trimmed, agent-safe fork of
+[`wacli`](https://github.com/steipete/wacli), forked at upstream version
+`v0.7.0`. It exposes only commands that read a local `wacli.db` produced by
+the upstream writer.
 
-### Security
+### Removed (relative to upstream wacli v0.7.0)
 
-- Auth: reject `?` and `#` in whatsmeow session store paths to avoid SQLite URI parameter injection. (#180 — thanks @shaun0927)
-- Send: validate phone-number recipients before constructing WhatsApp JIDs. (#144 — thanks @draix)
-- Store: restrict index and session SQLite database files to owner-only permissions. (#147 — thanks @draix)
-
-### Fixed
-
-- Groups: hide groups after `groups leave`, mark missing joined groups as left during refresh, and show them again if a later refresh reports membership. (#125, #129 — thanks @SeifBenayed and @ImLukeF)
-- History: cap on-demand backfill at 500 messages per request and 100 requests per run.
-- Messages: normalize device-specific `@s.whatsapp.net` JIDs before storing chats, contacts, and senders.
-- Doctor: report lock owner PID and distinguish paired stores locked by another process. (#105 — thanks @artemgetmann)
-- Media: recover panics per download job so one bad payload no longer drains the worker pool. (#179 — thanks @shaun0927)
-- Messages: attribute history messages from LID-addressed groups to the top-level participant sender. (#19 — thanks @entropyy0)
-- Messages: show display text for replies, reactions, and media in `messages context`. (#183 — thanks @fuleinist)
-- Send: strip a leading `+` from phone-number recipients before building WhatsApp JIDs. (#74 — thanks @FrederickStempfle)
-- Search: keep FTS5 enabled after reopening existing databases with already-applied migrations. (#185 — thanks @iamhitarth)
-- Send: add `send text --reply-to` for quoted replies, with sender inference for synced group messages. (#154 — thanks @draix)
-- Send: bound send attempts and reconnect once for stale-session/time-out failures instead of hanging indefinitely. (#115 — thanks @0xatrilla)
-- Send: persist retry-message plaintext so linked devices can decrypt retried messages. (#186 — thanks @SimDamDev)
-- Store: use the XDG state directory on Linux by default, while keeping existing `~/.wacli` stores working. (#172, #164 — thanks @txhno)
-- Sync: keep `sync --once` idle timing focused on message/history events so connection chatter cannot hang exit. (#119 — thanks @jyothepro)
-- Sync: start `sync --once` idle timing after the `Connected` event. (#171 — thanks @fuleinist)
-- Sync: include event type, stack trace, and recovery count when logging recovered event-handler panics. (#181 — thanks @shaun0927)
-- Sync: apply bounded backpressure to media download enqueueing instead of spawning unbounded overflow goroutines. (#121 — thanks @jyothepro)
-- Windows: split store locking by platform so the lock package compiles on Windows. (#188 — thanks @dinakars777)
-
-### Docs
-
-- Maintainers: add CODEOWNERS and maintainer contact info.
-- Agents: add AGENTS.md for AI agent guidance. (#190 — thanks @adhitShet)
-
-### Chore
-
-- CI: compile-test the Windows lock package to catch platform regressions. (#188 — thanks @dinakars777)
-- Dependencies: update Go modules including `whatsmeow`, `go-sqlite3`, `x/*`, and related runtime libs.
-- Refactor: split WhatsApp message parsing into focused text, media, business, and context helpers.
-- Refactor: inject clocks in app/store paths for deterministic tests.
-- Version: bump CLI version string to `0.7.0`.
-
-## 0.6.0 - 2026-04-14
-
-### Security
-
-- Search: sanitize FTS5 user queries and escape LIKE wildcards to avoid query-syntax injection.
-- Store: reject SQLite URI path injection via `?` and `#`, guard empty table names, and strip null/control chars from sanitized paths.
-- Sync: recover panics in event handlers and media workers instead of crashing the process.
-
-### Fixed
-
-- Sync: bound reconnect duration so long-running commands do not hold the store lock forever.
-- CLI: force exit on a second SIGINT during long-running commands.
-
-### Added
-
-- Store: add `WACLI_STORE_DIR` to configure the default store directory.
-
-### Chore
-
-- Dependencies: bump `filippo.io/edwards25519`.
-
-## 0.5.0 - 2026-04-12
-
-### Fixed
-
-- WhatsApp connectivity: update `whatsmeow` for the current WhatsApp protocol and fix `405 (Client Outdated)` failures.
+- All commands that talk to WhatsApp: `auth`, `auth status`, `auth logout`,
+  `sync`, `send text`, `send file`, `send react`, `media download`,
+  `history backfill`, `presence typing`, `presence paused`,
+  `contacts refresh`, `groups refresh`, `groups info`, `groups rename`,
+  `groups leave`, `groups participants` (add/remove/promote/demote),
+  `groups invite link` (get/revoke), `groups join`.
+- All commands that write the local store, even without network access:
+  `contacts alias` (set/rm), `contacts tags` (add/rm).
+- `--read-only` flag and `WACLI_READONLY` env var (the binary is now
+  unconditionally read-only at the SQLite-driver level).
+- `--lock-wait` flag and the file-based store lock (`internal/lock`); the
+  reader does not acquire it and does not need it.
+- `WACLI_DEVICE_LABEL` and `WACLI_DEVICE_PLATFORM` env vars (no
+  authentication).
+- The `whatsmeow` dependency tree (`internal/wa`, all `go.mau.fi/...`
+  imports), `signal`, and related packages.
+- `doctor --connect` and the auth/connection/lock fields on the doctor
+  report.
 
 ### Changed
 
-- Internal architecture: split store and groups command logic into focused modules for cleaner maintenance and safer follow-up changes.
-- Dependencies: bump core Go modules including `whatsmeow`, `go-sqlite3`, and `x/*` runtime libs.
+- Binary renamed to `wacli-reader`. Source directory `cmd/wacli/` retains
+  its upstream name to keep upstream rebases clean.
+- Production code opens the store with a new `store.OpenReadOnly` helper
+  (URI flag `mode=ro`); the existing `store.Open` (writable, runs
+  migrations) is preserved unchanged so upstream's store tests and
+  upstream changes to the store package rebase cleanly. Schema migrations
+  are not run by `wacli-reader`; the upstream writer is expected to have
+  created and migrated the database.
+- Default store directory is unchanged (still `~/.local/state/wacli` on
+  Linux, `~/.wacli` elsewhere) so the reader transparently sees the
+  upstream writer's data.
+- `doctor` report slimmed to store dir, FTS flag, and DB stats.
 
-### Build
+### Kept (rebased from upstream)
 
-- CI: extract a shared setup action and reuse it across CI and release workflows.
-- Release: install arm64 libc headers in release workflow to improve ARM build reliability.
+- `chats list`, `chats show`
+- `contacts search`, `contacts show`
+- `groups list`
+- `messages list`, `messages search`, `messages show`, `messages context`
+- `doctor`, `version`, `completion`, `help`
+- FTS5-backed search with `LIKE` fallback when the build tag is absent
+- `--store`, `--json`, `--full`, `--timeout` global flags
 
-### Docs
+### Compatibility
 
-- README: update usage/docs for the 0.2.0 release baseline.
-- Changelog: sync unreleased notes with all commits since `v0.2.0`.
+- Designed to read a `wacli.db` produced by upstream `wacli` v0.7.0.
+- Two binaries can run concurrently against the same store (upstream
+  `wacli sync --follow` as writer, `wacli-reader` as reader); SQLite WAL
+  prevents reader/writer blocking.
 
-### Chore
+### Why this fork exists
 
-- Version: bump CLI version string to `0.5.0`.
-
-## 0.2.0 - 2026-01-23
-
-### Added
-
-- Messages: store display text for reactions, replies, and media; include in search output.
-- Send: `wacli send file --filename` to override display name for uploads. (#7 — thanks @plattenschieber)
-- Auth: allow `WACLI_DEVICE_LABEL` and `WACLI_DEVICE_PLATFORM` overrides for linked device identity. (#4 — thanks @zats)
-
-### Fixed
-
-- Build: preserve existing `CGO_CFLAGS` when adding GCC 15+ workaround. (#8 — thanks @ramarivera)
-- Messages: keep captions in list/search output.
-
-### Build
-
-- Release: multi-OS GoReleaser configs and workflow for macOS, linux, and windows artifacts.
-
-### Docs
-
-- Install: clarify Homebrew vs local build paths.
-- Changelog: introduce project changelog and prep `0.2.0` release notes.
-
-## 0.1.1 - 2025-12-12
-
-### Fixed
-
-- Release: fix workflow for CGO builds.
-
-## 0.1.0 - 2025-12-12
-
-### Added
-
-- Auth: `wacli auth` QR login, bootstrap sync, optional follow, idle-exit, background media download, contacts/groups refresh.
-- Sync: non-interactive `wacli sync` once/follow, never shows QR, idle-exit, background media download, optional contacts/groups refresh.
-- Messages: list/search/show/context with chat/sender/time/media filters; FTS5 search with LIKE fallback and snippets.
-- Send: text and file (image/video/audio/document) with caption and MIME override.
-- Media: download by chat/id, resolves output paths, and records downloaded media in the DB.
-- History: on-demand backfill per chat with request count, wait, and idle-exit.
-- Contacts: search/show; import from WhatsApp store; local alias and tag management.
-- Chats: list/show with kind and last message timestamp.
-- Groups: list/refresh/info/rename; participants add/remove/promote/demote; invite link get/revoke; join/leave.
-- Diagnostics: `wacli doctor` for store path, lock status/info, auth/connection check, and FTS status.
-- CLI UX: human-readable output by default with `--json`, global `--store`/`--timeout`, plus `wacli version`.
-- Storage: default `~/.wacli`, lock file for single-instance safety, SQLite DB with FTS5, WhatsApp session store, and media directory.
+Upstream `wacli` requires `session.db` (a full-access WhatsApp session
+token) to run, and exposes commands that send messages and modify groups.
+That makes the upstream binary unsafe to hand to an AI agent: a compromised
+agent can use any subcommand to act on the user's behalf. `wacli-reader`
+removes the dangerous code paths entirely, so there is nothing to disable
+or bypass.

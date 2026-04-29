@@ -2,7 +2,7 @@
 
 ## GitHub Release Artifacts
 
-`wacli` uses GoReleaser (`.goreleaser.yaml` for macOS, `.goreleaser-linux-windows.yaml` for linux/windows) and the GitHub Actions workflow `.github/workflows/release.yml`.
+`wacli-reader` uses GoReleaser (`.goreleaser.yaml` for macOS, `.goreleaser-linux-windows.yaml` for linux/windows) and the GitHub Actions workflow `.github/workflows/release.yml`.
 
 To cut a release:
 
@@ -11,23 +11,15 @@ To cut a release:
    - `git push origin vX.Y.Z`
 2. Wait for the GitHub Actions “release” workflow to publish the release artifacts.
 
-To re-release an existing tag, run the workflow manually and pass the tag (e.g. `v0.1.0`).
+To re-release an existing tag, run the workflow manually and pass the tag (e.g. `v0.0.1`).
 
-Expected macOS artifact name (used by the tap updater):
+Expected macOS artifact name:
 
-- `wacli-macos-universal.tar.gz`
+- `wacli-reader-macos-universal.tar.gz`
 
 Other artifacts:
 
-- `wacli-linux-<arch>.tar.gz`
-- `wacli-windows-<arch>.zip`
+- `wacli-reader-linux-<arch>.tar.gz`
+- `wacli-reader-windows-<arch>.zip`
 
-## Homebrew Tap
-
-The tap formula lives in `../homebrew-tap/Formula/wacli.rb`.
-
-Once a release exists, update the tap formula by running the `Update Formula` workflow in the tap repo with:
-
-- `formula`: `wacli`
-- `tag`: `vX.Y.Z`
-- `repository`: `steipete/wacli`
+Remember to also bump the `version` constant in [`cmd/wacli/root.go`](../cmd/wacli/root.go) so `wacli-reader version` matches the new tag, and add a `## [X.Y.Z]` entry to [`CHANGELOG.md`](../CHANGELOG.md).

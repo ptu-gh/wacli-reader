@@ -37,18 +37,18 @@ func newMessagesListCmd(flags *rootFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List messages",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := withTimeout(context.Background(), flags)
+			_, cancel := withTimeout(context.Background(), flags)
 			defer cancel()
 
 			if fromMe && fromThem {
 				return fmt.Errorf("--from-me and --from-them are mutually exclusive")
 			}
 
-			a, lk, err := newApp(ctx, flags, false, false)
+			a, err := newApp(flags)
 			if err != nil {
 				return err
 			}
-			defer closeApp(a, lk)
+			defer a.Close()
 
 			var after *time.Time
 			var before *time.Time
@@ -126,14 +126,14 @@ func newMessagesSearchCmd(flags *rootFlags) *cobra.Command {
 		Short: "Search messages (FTS5 if available; otherwise LIKE)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := withTimeout(context.Background(), flags)
+			_, cancel := withTimeout(context.Background(), flags)
 			defer cancel()
 
-			a, lk, err := newApp(ctx, flags, false, false)
+			a, err := newApp(flags)
 			if err != nil {
 				return err
 			}
-			defer closeApp(a, lk)
+			defer a.Close()
 
 			var after *time.Time
 			var before *time.Time
@@ -205,14 +205,14 @@ func newMessagesShowCmd(flags *rootFlags) *cobra.Command {
 				return fmt.Errorf("--chat and --id are required")
 			}
 
-			ctx, cancel := withTimeout(context.Background(), flags)
+			_, cancel := withTimeout(context.Background(), flags)
 			defer cancel()
 
-			a, lk, err := newApp(ctx, flags, false, false)
+			a, err := newApp(flags)
 			if err != nil {
 				return err
 			}
-			defer closeApp(a, lk)
+			defer a.Close()
 
 			m, err := a.DB().GetMessage(chat, id)
 			if err != nil {
@@ -246,14 +246,14 @@ func newMessagesContextCmd(flags *rootFlags) *cobra.Command {
 				return fmt.Errorf("--chat and --id are required")
 			}
 
-			ctx, cancel := withTimeout(context.Background(), flags)
+			_, cancel := withTimeout(context.Background(), flags)
 			defer cancel()
 
-			a, lk, err := newApp(ctx, flags, false, false)
+			a, err := newApp(flags)
 			if err != nil {
 				return err
 			}
-			defer closeApp(a, lk)
+			defer a.Close()
 
 			msgs, err := a.DB().MessageContext(chat, id, before, after)
 			if err != nil {

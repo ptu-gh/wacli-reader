@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -E \"\\\\.go$\")",
+      "Bash(pnpm test:go)",
+      "Bash(go test *)",
+      "Bash(sqlite3 *)"
+    ]
+  }
+}

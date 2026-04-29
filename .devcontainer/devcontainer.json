@@ -1,0 +1,25 @@
+{
+	"name": "Go",
+	"image": "mcr.microsoft.com/devcontainers/go:1-bookworm",
+	"runArgs": [
+		"--name", "wacli-dev-container",
+		"--hostname", "wacli"
+	],
+	"features": {
+		"ghcr.io/devcontainer-config/features/dot-config:4": {},
+		"ghcr.io/devcontainers/features/node:1": {}, // Required for Claude
+        "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+	},
+	"postCreateCommand": "npm install -g @anthropic-ai/claude-code && grep -v '::1' /etc/hosts > /tmp/hosts && cat /tmp/hosts > /etc/hosts && rm /tmp/hosts",
+	"mounts": [
+        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
+    ],
+	"remoteUser": "vscode",
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"anthropic.claude-code" 
+			]
+		}
+	}
+}

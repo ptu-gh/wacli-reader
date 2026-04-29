@@ -1,11 +1,11 @@
 version: 2
 
-project_name: wacli
+project_name: wacli-reader
 
 builds:
-  - id: wacli
+  - id: wacli-reader
     main: ./cmd/wacli
-    binary: wacli
+    binary: wacli-reader
     env:
       - CGO_ENABLED=1
     flags:
@@ -21,10 +21,10 @@ builds:
       - arm64
 
 universal_binaries:
-  - id: wacli
+  - id: wacli-reader
     ids:
-      - wacli
-    name_template: wacli
+      - wacli-reader
+    name_template: wacli-reader
     replace: true
 
 archives:

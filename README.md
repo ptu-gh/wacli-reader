@@ -1,204 +1,109 @@
-# 🗃️ wacli — WhatsApp CLI: sync, search, send
+# 🗃️ wacli-reader — agent-safe read-only WhatsApp message access
 
-WhatsApp CLI built on top of `whatsmeow`, focused on:
+`wacli-reader` is a heavily trimmed fork of [`wacli`](https://github.com/steipete/wacli) (forked at upstream `v0.7.0`). It exposes only commands that **read** a `wacli.db` produced by the upstream writer — searching messages, listing chats, looking up contacts and groups. It never authenticates with WhatsApp, never opens `session.db`, and opens the SQLite store with `mode=ro` so the connection itself rejects writes at the driver layer.
 
-- Best-effort local sync of message history + continuous capture
-- Fast offline search
-- Sending text, quoted replies, and files
-- Contact + group management
-- Scriptable JSON output
+Run `wacli-reader` alongside an upstream `wacli sync --follow` instance to give an AI agent (or any read-only consumer) safe, scoped access to your message history without exposing send/auth/group-management capabilities.
 
-This is a third-party tool that uses the WhatsApp Web protocol via `whatsmeow` and is not affiliated with WhatsApp.
+`wacli-reader` itself does **not** speak the WhatsApp Web protocol and does not depend on `whatsmeow`. It only reads a `wacli.db` SQLite file that upstream `wacli` (which does use `whatsmeow`) has already populated. This project is third-party and not affiliated with WhatsApp.
 
-## Status
+## Why this fork exists
 
-Core implementation is in place. See `docs/spec.md` for design notes.
+Upstream `wacli` is a full-featured WhatsApp client. It needs `session.db` (which holds a full-access WhatsApp session token) to run, and it ships commands that send messages, react, modify groups, change participants, and revoke invite links. That makes it unsafe to hand to an AI agent: a compromised or rogue agent can use any subcommand to send messages or leak data on the user's behalf. Upstream's `--read-only` flag is opt-in and trivially bypassed by the agent.
 
-## Major features
+`wacli-reader` removes the dangerous code paths entirely so there is nothing to bypass:
 
-- **Auth + sync**: `auth` shows QR login and bootstraps sync; `sync` is non-interactive, can run once or follow continuously, and can refresh contacts/groups.
-- **Offline message store**: local SQLite store with FTS5 search when available and LIKE fallback.
-- **Message tools**: list/search/show/context with chat, sender, direction, time, order, and media-type filters.
-- **Sending**: send text, quoted text replies, and image/video/audio/document files with captions, MIME override, and custom display filenames.
-- **Media**: download synced message media on demand, or download in the background during auth/sync.
-- **Contacts/chats/groups**: search/show contacts, local aliases/tags, list/show chats, refresh/list/info/rename groups, manage participants, invite links, join, and leave; left groups are hidden after leave.
-- **Presence**: send typing/paused indicators.
-- **Diagnostics + safety**: `doctor`, read-only mode, store locks with lock-owner reporting, lock waiting, owner-only database permissions, panic recovery, reconnect bounds, and bounded media queue backpressure.
-- **CLI UX**: human-readable tables by default; `--json` for scripts; `--full` to avoid truncation.
+- The binary contains no code that opens `session.db`.
+- The SQLite connection is opened with `mode=ro`; writes fail at the driver layer with `attempt to write a readonly database`.
+- There is no flag, env var, or config file that re-enables writes.
+- `internal/wa` (the whatsmeow client) and `internal/lock` are absent from the binary.
+- The binary performs no network I/O.
+
+Pair the binary with filesystem ACLs for defence in depth: give the agent's user read-only access to `wacli.db` (and `wacli.db-wal`) and deny access to `session.db`.
+
+## Relationship to upstream
+
+`wacli-reader` is rebased periodically on upstream `wacli`. Sync, send, media, presence, history-backfill, auth, and group/contact-management commands are deleted in this fork; bug fixes and search improvements that flow into upstream are pulled into the fork on each rebase. To keep rebases tractable we leave upstream's `internal/store` package and its tests untouched — the read-only guarantee comes from the new `store.OpenReadOnly` wrapper in production code, not from removing helpers.
 
 ## Install / Build
 
-Choose **one** of the following options.  
-If you install via Homebrew, you can skip the local build step.
+```bash
+go build -tags sqlite_fts5 -o ./dist/wacli-reader ./cmd/wacli
+```
 
-### Option A: Install via Homebrew (tap)
+The source directory is still `./cmd/wacli` (unchanged from upstream for rebase ergonomics); the resulting binary is `wacli-reader`.
 
-- `brew install steipete/tap/wacli`
-
-### Option B: Build locally
-
-- `go build -tags sqlite_fts5 -o ./dist/wacli ./cmd/wacli`
-
-Run (local build only):
-
-- `./dist/wacli --help`
+```bash
+./dist/wacli-reader --help
+```
 
 ## Quick start
 
-Default store directory is the XDG state directory on Linux (`~/.local/state/wacli`) and `~/.wacli` elsewhere. Existing Linux `~/.wacli` stores keep working; override with `--store DIR` or `WACLI_STORE_DIR`.
+Default store directory is the upstream writer's location: the XDG state dir on Linux (`~/.local/state/wacli`) and `~/.wacli` elsewhere. Existing Linux `~/.wacli` stores keep working. Override with `--store DIR` or `WACLI_STORE_DIR`.
 
 ```bash
-# 1) Authenticate (shows QR), then bootstrap sync
-pnpm wacli auth
-# or, after building locally: ./dist/wacli auth
+# Diagnostics — store path, FTS flag, message/chat/contact/group counts
+pnpm wacli-reader doctor
 
-# 2) Keep syncing (never shows QR; requires prior auth)
-pnpm wacli sync --follow
-
-# Diagnostics
-pnpm wacli doctor
-
-# Search messages
-pnpm wacli messages search "meeting"
+# Search messages (FTS5 if available, LIKE fallback)
+pnpm wacli-reader messages search "meeting"
 
 # List recent messages from a chat, oldest first
-pnpm wacli messages list --chat 1234567890@s.whatsapp.net --asc
+pnpm wacli-reader messages list --chat 1234567890@s.whatsapp.net --asc
 
 # Show context around a message
-pnpm wacli messages context --chat 1234567890@s.whatsapp.net --id <message-id>
+pnpm wacli-reader messages context --chat 1234567890@s.whatsapp.net --id <message-id>
 
-# Backfill older messages for a chat (best-effort; requires your primary device online)
-pnpm wacli history backfill --chat 1234567890@s.whatsapp.net --requests 10 --count 50
+# Show one message
+pnpm wacli-reader messages show --chat 1234567890@s.whatsapp.net --id <message-id>
 
-# Download media for a message (after syncing)
-pnpm wacli media download --chat 1234567890@s.whatsapp.net --id <message-id>
+# Chats
+pnpm wacli-reader chats list
+pnpm wacli-reader chats show --jid 1234567890@s.whatsapp.net
 
-# Send a message
-pnpm wacli send text --to 1234567890 --message "hello"
+# Contacts
+pnpm wacli-reader contacts search "alice"
+pnpm wacli-reader contacts show --jid 1234567890@s.whatsapp.net
 
-# Send a quoted reply
-pnpm wacli send text --to 1234567890 --message "replying" --reply-to <message-id>
-
-# Send a file
-pnpm wacli send file --to 1234567890 --file ./pic.jpg --caption "hi"
-# Or override display name
-pnpm wacli send file --to 1234567890 --file /tmp/abc123 --filename report.pdf
-
-# React to a message (omit --reaction for the default; use --reaction "" to clear)
-pnpm wacli send react --to 1234567890 --id <message-id>
-
-# List groups and manage them
-pnpm wacli groups list
-pnpm wacli groups rename --jid 123456789@g.us --name "New name"
-
-# Send presence indicators
-pnpm wacli presence typing --to 1234567890
-pnpm wacli presence paused --to 1234567890
+# Groups (read-only listing)
+pnpm wacli-reader groups list
 ```
-
-## High-level UX
-
-- `wacli auth`: interactive login (shows QR code), then immediately performs initial data sync.
-- `wacli sync`: non-interactive sync loop (never shows QR; errors if not authenticated).
-- Output is human-readable by default; pass `--json` for machine-readable output.
-- Pass `--full` to keep full IDs in table output; non-TTY output keeps full IDs automatically.
-- Pass `--read-only` or set `WACLI_READONLY=1` to block commands that intentionally mutate WhatsApp or the local store.
 
 ## Command surface
 
-- `wacli auth [--follow] [--idle-exit 30s] [--download-media]`
-- `wacli auth status`
-- `wacli auth logout`
-- `wacli sync [--once] [--follow] [--idle-exit 30s] [--max-reconnect 5m] [--download-media] [--refresh-contacts] [--refresh-groups]`
-- `wacli messages list [--chat JID] [--sender JID] [--from-me|--from-them] [--asc] [--limit N] [--after DATE] [--before DATE]`
-- `wacli messages search <query> [--chat JID] [--from JID] [--has-media] [--type text|image|video|audio|document]`
-- `wacli messages show --chat JID --id MSG_ID`
-- `wacli messages context --chat JID --id MSG_ID [--before N] [--after N]`
-- `wacli send text --to PHONE_OR_JID --message TEXT [--reply-to MSG_ID] [--reply-to-sender JID]`
-- `wacli send file --to PHONE_OR_JID --file PATH [--caption TEXT] [--filename NAME] [--mime TYPE]`
-- `wacli send react --to PHONE_OR_JID --id MSG_ID [--reaction TEXT] [--sender JID]`
-- `wacli media download --chat JID --id MSG_ID [--output PATH]`
-- `wacli contacts search <query>`
-- `wacli contacts show --jid JID`
-- `wacli contacts refresh`
-- `wacli contacts alias set|rm --jid JID [--alias NAME]`
-- `wacli contacts tags add|rm --jid JID --tag TAG`
-- `wacli chats list [--query TEXT] [--limit N]`
-- `wacli chats show --jid JID`
-- `wacli groups list [--query TEXT] [--limit N]`
-- `wacli groups refresh`
-- `wacli groups info --jid GROUP_JID`
-- `wacli groups rename --jid GROUP_JID --name NAME`
-- `wacli groups leave --jid GROUP_JID`
-- `wacli groups participants add|remove|promote|demote --jid GROUP_JID --user PHONE_OR_JID`
-- `wacli groups invite link get|revoke --jid GROUP_JID`
-- `wacli groups join --code INVITE_CODE`
-- `wacli history backfill --chat JID [--count 50] [--requests N]`
-- `wacli presence typing --to PHONE_OR_JID [--media audio]`
-- `wacli presence paused --to PHONE_OR_JID`
-- `wacli doctor [--connect]`
-- `wacli version`
+- `wacli-reader chats list [--query TEXT] [--limit N]`
+- `wacli-reader chats show --jid JID`
+- `wacli-reader contacts search <query> [--limit N]`
+- `wacli-reader contacts show --jid JID`
+- `wacli-reader groups list [--query TEXT] [--limit N]`
+- `wacli-reader messages list [--chat JID] [--sender JID] [--from-me|--from-them] [--asc] [--limit N] [--after DATE] [--before DATE]`
+- `wacli-reader messages search <query> [--chat JID] [--from JID] [--has-media] [--type text|image|video|audio|document]`
+- `wacli-reader messages show --chat JID --id MSG_ID`
+- `wacli-reader messages context --chat JID --id MSG_ID [--before N] [--after N]`
+- `wacli-reader doctor`
+- `wacli-reader version`
+- `wacli-reader help`, `wacli-reader completion <shell>` (cobra built-ins)
 
-## Storage
+## Storage and concurrency
 
-Defaults to `~/.local/state/wacli` on Linux and `~/.wacli` elsewhere. Existing Linux `~/.wacli` stores are reused when the XDG state store does not exist. Override with `--store DIR`.
+By default `wacli-reader` resolves the same store directory as upstream `wacli` (`~/.local/state/wacli` on Linux, `~/.wacli` elsewhere), so it transparently reads whatever the writer has populated. It opens `wacli.db` with `mode=ro` and never acquires the upstream writer's `LOCK` file, so it is safe to run while `wacli sync --follow` is writing. SQLite's WAL mode (configured by the writer) lets readers see a consistent snapshot at every query without blocking the writer.
 
-Global flags:
+`wacli-reader` does not create the store directory, run schema migrations, or chmod database files — those are the writer's responsibility.
+
+## Global flags
 
 - `--store DIR`: store directory.
 - `--json`: JSON output.
 - `--full`: disable table truncation.
-- `--timeout DURATION`: timeout for non-sync commands.
-- `--lock-wait DURATION`: wait for the store lock before failing write commands.
-- `--read-only`: reject commands that intentionally write WhatsApp or the local store.
+- `--timeout DURATION`: timeout for read commands (default 5m).
 
 ## Environment overrides
 
-- `WACLI_DEVICE_LABEL`: set the linked device label (shown in WhatsApp).
-- `WACLI_DEVICE_PLATFORM`: override the linked device platform (defaults to `CHROME` if unset or invalid).
-- `WACLI_READONLY`: set to `1`, `true`, `yes`, or `on` to enable read-only mode.
 - `WACLI_STORE_DIR`: override the default store directory.
-
-## Backfilling older history
-
-`wacli sync` stores whatever WhatsApp Web sends opportunistically. To try to fetch *older* messages, use on-demand history sync requests to your **primary device** (your phone).
-
-Important notes:
-
-- This is **best-effort**: WhatsApp may not return full history.
-- Your **primary device must be online**.
-- Requests are **per chat** (DM or group). `wacli` uses the *oldest locally stored message* in that chat as the anchor.
-- Recommended `--count` is `50` per request; maximum is `500`.
-- Maximum `--requests` per run is `100`.
-
-### Backfill one chat
-
-```bash
-pnpm wacli history backfill --chat 1234567890@s.whatsapp.net --requests 10 --count 50
-```
-
-### Backfill all chats (script)
-
-This loops through chats already known in your local DB:
-
-```bash
-pnpm -s wacli -- --json chats list --limit 100000 \
-  | jq -r '.[].JID' \
-  | while read -r jid; do
-      pnpm -s wacli -- history backfill --chat "$jid" --requests 3 --count 50
-    done
-```
 
 ## Prior art / credit
 
-This project is heavily inspired by (and learns from) the excellent `whatsapp-cli` by Vicente Reig:
-
-- [`whatsapp-cli`](https://github.com/vicentereig/whatsapp-cli)
+`wacli-reader` is a fork of [`wacli`](https://github.com/steipete/wacli) by [@steipete](https://github.com/steipete) and [@dinakars777](https://github.com/dinakars777), which is itself heavily inspired by Vicente Reig's [`whatsapp-cli`](https://github.com/vicentereig/whatsapp-cli). All the credit for the synced data model, FTS5 search infrastructure, and CLI structure goes upstream — this fork is purely a reductive variant.
 
 ## License
 
 See `LICENSE`.
-
-## Maintainers
-- Created by [@steipete](https://github.com/steipete)
-- Currently maintained by [@dinakars777](https://github.com/dinakars777)
