@@ -59,6 +59,12 @@ When pulling upstream changes:
 4. If upstream removes a write helper that `wacli-reader` does not call: take the removal.
 5. After resolving conflicts, run the full gate locally and confirm `wacli-reader version` still prints `0.0.2` (or whatever the fork's current version is).
 
+## Upstream patches to propose
+
+These would benefit upstream openclaw/wacli AND the fork. Worth filing PRs against upstream when there's time:
+
+- **Move the LID↔phone-JID mapping out of `session.db`.** Today `internal/app/session_resolver.go` opens `session.db` to map `@lid` identities back to their `@s.whatsapp.net` counterparts. That ties identity resolution to the auth/session store. The mapping is identity metadata, not auth state — it belongs in `wacli.db` (a new `identity_aliases` table or similar). Doing that would let `wacli-reader` consume the mapping (we deliberately can't open `session.db`), and would untangle the two concerns upstream too. Until then, `chats show --jid <lid>` returns no rows for LID identities — `chats list --query "Name"` is the workaround documented in `SKILL.md`.
+
 ## Commit & Pull Request Guidelines
 - Follow Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `security:`, `ci:` with an imperative summary.
 - Keep commits focused; avoid bundling unrelated changes.
