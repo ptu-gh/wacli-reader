@@ -11,6 +11,7 @@
     "test:fts": "go test -tags sqlite_fts5 ./...",
     "lint": "go vet ./...",
     "format": "gofmt -w .",
-    "format:check": "bash -lc 'out=$(gofmt -l .); if [ -n \"$out\" ]; then echo \"$out\"; exit 1; fi'"
+    "format:check": "bash -lc 'out=$(gofmt -l .); if [ -n \"$out\" ]; then echo \"$out\"; exit 1; fi'",
+    "generate:sqlc": "go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate"
   }
 }

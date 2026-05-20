@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/openclaw/wacli/internal/config"
+	"github.com/openclaw/wacli/internal/out"
+	"github.com/openclaw/wacli/internal/store"
 	"github.com/spf13/cobra"
-	"github.com/steipete/wacli/internal/config"
-	"github.com/steipete/wacli/internal/out"
-	"github.com/steipete/wacli/internal/store"
 )
 
 type doctorStoreStats struct {
@@ -105,7 +105,7 @@ func newDoctorCmd(flags *rootFlags) *cobra.Command {
 
 			if rep.StoreError != "" {
 				fmt.Fprintf(os.Stdout, "\nERROR: store could not be opened: %s\n", rep.StoreError)
-				fmt.Fprintln(os.Stdout, "Tip: wacli-reader needs a wacli.db that upstream wacli has already synced. See https://github.com/steipete/wacli.")
+				fmt.Fprintln(os.Stdout, "Tip: wacli-reader needs a wacli.db that upstream wacli has already synced. See https://github.com/openclaw/wacli.")
 			}
 			return nil
 		},

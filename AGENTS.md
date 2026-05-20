@@ -45,6 +45,11 @@
 - New tests should sit next to the code they cover.
 - FTS-sensitive tests must run under `-tags sqlite_fts5`; non-FTS path tests must also pass without the tag.
 
+## Branches
+- **`main`** mirrors upstream (`upstream/main`, the canonical wacli repo). It is kept fast-forwarded to upstream; no fork-local commits ever land on `main`.
+- **`reader`** carries the fork's changes — the original fork commit, ongoing maintenance, and upstream merge passes. `origin/reader` is the published fork branch.
+- When upstream advances: `git fetch upstream && git checkout main && git merge --ff-only upstream/main`. Upstream merge work targets `reader`, not a side branch.
+
 ## Rebasing on upstream wacli
 When pulling upstream changes:
 1. Resolve conflicts by **keeping the deletions** in `internal/wa/`, `internal/lock/`, and the deleted `cmd/wacli/*.go` and `internal/app/*.go` files. Anything upstream adds to those paths is intentionally not shipped here.

@@ -8,6 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The fork is rebased periodically on upstream `wacli`, so changes to surviving files (especially `internal/store/` and its tests) are kept narrow and surgical.
 
+## Branches
+
+- **`main`** mirrors upstream (`upstream/main`, the canonical wacli repo). It is kept fast-forwarded to upstream; no fork-local commits ever land on `main`.
+- **`reader`** carries the fork's changes — the original fork commit, ongoing maintenance, and upstream merge passes. `origin/reader` is the published fork branch. Upstream merge work targets `reader`, not a side branch.
+
 ## Commands
 
 All build automation runs through pnpm, which delegates to Go tooling.

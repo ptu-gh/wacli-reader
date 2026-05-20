@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/openclaw/wacli/internal/app"
+	"github.com/openclaw/wacli/internal/config"
+	"github.com/openclaw/wacli/internal/out"
 	"github.com/spf13/cobra"
-	"github.com/steipete/wacli/internal/app"
-	"github.com/steipete/wacli/internal/config"
-	"github.com/steipete/wacli/internal/out"
 )
 
 var version = "0.0.1"
@@ -63,6 +63,7 @@ func newApp(flags *rootFlags) (*app.App, error) {
 		StoreDir: storeDir,
 		Version:  version,
 		JSON:     flags.asJSON,
+		ReadOnly: true,
 	})
 	if err != nil {
 		return nil, err
