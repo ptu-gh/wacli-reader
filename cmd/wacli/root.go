@@ -43,6 +43,10 @@ func execute(args []string) error {
 	rootCmd.AddCommand(newContactsCmd(&flags))
 	rootCmd.AddCommand(newChatsCmd(&flags))
 	rootCmd.AddCommand(newGroupsCmd(&flags))
+	rootCmd.AddCommand(newCallsCmd(&flags))
+	rootCmd.AddCommand(newPollsCmd(&flags))
+	rootCmd.AddCommand(newPollCmd(&flags))
+	rootCmd.AddCommand(newStoreCmd(&flags))
 
 	rootCmd.SetArgs(args)
 	if err := rootCmd.Execute(); err != nil {

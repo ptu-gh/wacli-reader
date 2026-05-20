@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**`wacli-reader`** is a heavily trimmed, agent-safe fork of [`wacli`](https://github.com/steipete/wacli) (forked at upstream `v0.7.0`). It exposes only commands that **read** a `wacli.db` produced by the upstream writer; it never authenticates with WhatsApp, never opens `session.db`, and opens the SQLite store with `mode=ro` so writes are rejected at the SQLite-driver layer.
+**`wacli-reader`** is a heavily trimmed, agent-safe fork of [`wacli`](https://github.com/steipete/wacli) (now developed at [`github.com/openclaw/wacli`](https://github.com/openclaw/wacli)), originally forked at upstream `v0.7.0` and tracked forward to upstream `v0.9.2`. It exposes only commands that **read** a `wacli.db` produced by the upstream writer; it never authenticates with WhatsApp, never opens `session.db`, and opens the SQLite store read-only so writes are rejected at the SQLite-driver layer.
 
 The fork is rebased periodically on upstream `wacli`, so changes to surviving files (especially `internal/store/` and its tests) are kept narrow and surgical.
 
@@ -40,9 +40,9 @@ The codebase is split between the CLI layer (`cmd/wacli/`, still named after ups
 
 ### Packages
 
-**`internal/app`** — Trivial wrapper. The `App` struct holds only a `*store.DB`. `New(opts)` opens `wacli.db` read-only via `store.OpenReadOnly`. There is no WhatsApp client, no event loop, no sync code.
+**`internal/app`** — Trivial wrapper. The `App` struct holds only a `*store.DB`. `New(opts)` opens `wacli.db` read-only via `store.OpenReadOnly`. There is no WhatsApp client, no event loop, no sync code. `Options.ReadOnly` mirrors upstream's flag but is hard-wired on; `New` rejects `ReadOnly=false`.
 
-**`internal/store`** — SQLite layer. **Untouched from upstream** so rebases apply cleanly. The fork adds one new function — `OpenReadOnly(path)` — alongside upstream's `Open`. Production code reaches the package only through `OpenReadOnly`. The package's `Upsert*`, `Mark*`, `Set*`, `Add*`, `Remove*` write helpers and migration code remain dead-but-present so upstream changes don't conflict.
+**`internal/store`** — SQLite layer. **Taken wholesale from upstream** so rebases apply cleanly. Both `Open` and `OpenReadOnly` come from upstream (convergent fork). Production code reaches the package only through `OpenReadOnly`. The package's `Upsert*`, `Mark*`, `Set*`, `Add*`, `Remove*` write helpers and migration code remain dead-but-present so upstream changes don't conflict. Internally uses the sqlc-generated `internal/store/storedb/` package; regenerate with `pnpm generate:sqlc`.
 
 **`internal/config`** — Resolves XDG-compliant data/state directories for the store path. Unchanged from upstream so the reader and writer share one store dir by default.
 
@@ -50,7 +50,7 @@ The codebase is split between the CLI layer (`cmd/wacli/`, still named after ups
 
 **`internal/fsutil`, `internal/pathutil`, `internal/sqliteutil`** — Small helpers; mostly unchanged.
 
-**`cmd/wacli`** — Cobra CLI commands. `root.go` wires up `newApp(flags)` and registers the surviving sub-commands: `chats`, `contacts`, `doctor`, `groups`, `messages`, `version`. The cobra `Use` field is `wacli-reader`.
+**`cmd/wacli`** — Cobra CLI commands. `root.go` wires up `newApp(flags)` and registers the surviving sub-commands: `calls`, `chats`, `contacts`, `doctor`, `groups`, `messages`, `poll`, `polls`, `store`, `version`. The cobra `Use` field is `wacli-reader`.
 
 ### Removed from upstream
 
@@ -61,8 +61,10 @@ The codebase is split between the CLI layer (`cmd/wacli/`, still named after ups
 ### Key Data Flows
 
 - **Search**: `wacli-reader messages search` → `store.SearchMessages()` → FTS5 `MATCH` or `LIKE` fallback → formatted output.
-- **List**: `wacli-reader messages list` / `chats list` / `contacts search` / `groups list` → corresponding `store.List*` / `Search*` / `Get*` query → formatted output.
+- **List**: `wacli-reader messages list|starred` / `chats list` / `contacts search` / `groups list` / `calls list` / `polls list` → corresponding `store.List*` / `Search*` / `Get*` query → formatted output.
+- **Export**: `wacli-reader messages export` → `store.ListMessages()` (`Asc:true`) → JSON envelope to stdout or `--output` file.
 - **Doctor**: `wacli-reader doctor` → `store.Stats()` + `store.HasFTS()` → formatted report.
+- **Store stats**: `wacli-reader store stats` → `store.CountChats/Groups/LeftGroups/Messages` → counts table.
 
 ### Build Tag: `sqlite_fts5`
 

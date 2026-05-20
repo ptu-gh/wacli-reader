@@ -10,10 +10,14 @@
 		"ghcr.io/devcontainers/features/node:1": {}, // Required for Claude
         "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
 	},
-	"postCreateCommand": "npm install -g @anthropic-ai/claude-code && grep -v '::1' /etc/hosts > /tmp/hosts && cat /tmp/hosts > /etc/hosts && rm /tmp/hosts",
+	"postCreateCommand": "npm install -g @anthropic-ai/claude-code",
 	"mounts": [
-        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
-    ],
+		"source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind",
+		"source=/Users/Shared/ptu/wacli,target=/wacli-store,type=bind,readonly"
+	],
+	"containerEnv": {
+		"WACLI_STORE_DIR": "/wacli-store"
+	},
 	"remoteUser": "vscode",
 	"customizations": {
 		"vscode": {

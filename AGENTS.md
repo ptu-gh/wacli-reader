@@ -1,11 +1,12 @@
 # Repository Guidelines — `wacli-reader`
 
-`wacli-reader` is a heavily trimmed, agent-safe fork of [`wacli`](https://github.com/steipete/wacli), forked at upstream `v0.7.0`. It exposes only commands that read a `wacli.db` produced by the upstream writer. The fork is intended to be **rebased periodically on upstream wacli**, so changes to surviving files are kept narrow and surgical.
+`wacli-reader` is a heavily trimmed, agent-safe fork of [`wacli`](https://github.com/steipete/wacli) (now developed at [`github.com/openclaw/wacli`](https://github.com/openclaw/wacli)), originally forked at upstream `v0.7.0` and tracked forward to upstream `v0.9.2`. It exposes only commands that read a `wacli.db` produced by the upstream writer. The fork is intended to be **rebased periodically on upstream wacli**, so changes to surviving files are kept narrow and surgical.
 
 ## Project Structure
-- `cmd/wacli/`: CLI command wiring (chats, contacts search/show, groups list, messages, doctor, version). The source directory keeps its upstream name; the compiled binary is `wacli-reader`.
-- `internal/app/`: collapsed `App` struct that holds only the read-only DB handle.
-- `internal/store/`: SQLite schema, migrations, FTS5 search, query layer. **Untouched from upstream** — write helpers (`Upsert*`, `Mark*`, etc.) and migration code stay so upstream rebases apply cleanly. Production code reaches the package only through `store.OpenReadOnly`.
+- `cmd/wacli/`: CLI command wiring. Read-only surface: chats list/show, contacts search/show, groups list, messages list/search/starred/show/context/export, calls list, polls list, poll show, store stats, doctor, version. The source directory keeps its upstream name; the compiled binary is `wacli-reader`.
+- `internal/app/`: collapsed `App` struct that holds only the read-only DB handle. Mirrors upstream's `Options.ReadOnly` knob for interface parity but hard-wires it on; `New()` rejects `ReadOnly=false`.
+- `internal/store/`: SQLite schema, migrations, FTS5 search, query layer. **Taken wholesale from upstream** — write helpers (`Upsert*`, `Mark*`, etc.) and migration code stay so upstream rebases apply cleanly. Production code reaches the package only through `store.OpenReadOnly`. The package now uses the sqlc-generated `internal/store/storedb/` package internally.
+- `internal/store/sqlc/`, `internal/store/storedb/`, `sqlc.yaml`: sqlc input (`queries.sql`, `fts_stub.sql`) and the typed Go code generated from it. Regenerate with `pnpm generate:sqlc`.
 - `internal/config/`: store-dir resolution (`WACLI_STORE_DIR` env → XDG state dir on Linux → `~/.wacli`). Defaults still resolve to the upstream writer's location so `wacli-reader` transparently sees the writer's data.
 - `internal/out/`: JSON + table output helpers; all human text goes through here.
 - `internal/fsutil/`, `internal/pathutil/`, `internal/sqliteutil/`: small filesystem/path/sqlite helpers.
@@ -19,7 +20,7 @@
 
 ## Key Architectural Facts
 - **One database**: `wacli.db` only. `session.db` is never opened; the binary contains no code path that references it.
-- **Read-only by construction**: `App.New` calls `store.OpenReadOnly`, which opens SQLite with `?mode=ro`. The connection physically rejects writes with `attempt to write a readonly database`. There is no flag, env var, or config file that enables writes. Schema migrations are not run.
+- **Read-only by construction**: `App.New` calls `store.OpenReadOnly`, which opens SQLite with `mode=ro&_query_only=1` (plus `immutable=1` when no WAL/SHM sidecars are present, so a read-only filesystem still works). The connection physically rejects writes with `attempt to write a readonly database`. There is no flag, env var, or config file that enables writes. Schema migrations are not run.
 - **FTS5**: requires `-tags sqlite_fts5` at build time. The `wacli-reader` binary always builds with this tag.
 - **Concurrency with upstream writer**: SQLite WAL (set by the upstream writer) lets `wacli-reader` read while `wacli sync --follow` writes. The reader does not acquire the writer's `LOCK` file.
 - **Store path precedence**: `--store` flag → `WACLI_STORE_DIR` env → XDG `~/.local/state/wacli` on Linux (legacy `~/.wacli` fallback) → `~/.wacli` elsewhere. Unchanged from upstream so the reader and writer share one store by default.

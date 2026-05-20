@@ -1,6 +1,6 @@
 # 🗃️ wacli-reader — agent-safe read-only WhatsApp message access
 
-`wacli-reader` is a heavily trimmed fork of [`wacli`](https://github.com/steipete/wacli) (forked at upstream `v0.7.0`). It exposes only commands that **read** a `wacli.db` produced by the upstream writer — searching messages, listing chats, looking up contacts and groups. It never authenticates with WhatsApp, never opens `session.db`, and opens the SQLite store with `mode=ro` so the connection itself rejects writes at the driver layer.
+`wacli-reader` is a heavily trimmed fork of [`wacli`](https://github.com/steipete/wacli) (now developed at [`github.com/openclaw/wacli`](https://github.com/openclaw/wacli)) — originally forked at upstream `v0.7.0` and tracked forward to upstream `v0.9.2`. It exposes only commands that **read** a `wacli.db` produced by the upstream writer — searching messages, listing chats and groups, looking up contacts, inspecting calls and polls, exporting message history. It never authenticates with WhatsApp, never opens `session.db`, and opens the SQLite store read-only so the connection itself rejects writes at the driver layer.
 
 Run `wacli-reader` alongside an upstream `wacli sync --follow` instance to give an AI agent (or any read-only consumer) safe, scoped access to your message history without exposing send/auth/group-management capabilities.
 
@@ -66,6 +66,18 @@ pnpm wacli-reader contacts show --jid 1234567890@s.whatsapp.net
 
 # Groups (read-only listing)
 pnpm wacli-reader groups list
+
+# Call events
+pnpm wacli-reader calls list --limit 20
+
+# Polls (stored locally; no live voting)
+pnpm wacli-reader polls list
+pnpm wacli-reader poll show --chat 1234567890@s.whatsapp.net --id <poll-msg-id>
+
+# Starred messages, message export, and store row counts
+pnpm wacli-reader messages starred --limit 50
+pnpm wacli-reader messages export --chat 1234567890@s.whatsapp.net --output thread.json
+pnpm wacli-reader store stats
 ```
 
 ## Command surface
@@ -75,17 +87,23 @@ pnpm wacli-reader groups list
 - `wacli-reader contacts search <query> [--limit N]`
 - `wacli-reader contacts show --jid JID`
 - `wacli-reader groups list [--query TEXT] [--limit N]`
-- `wacli-reader messages list [--chat JID] [--sender JID] [--from-me|--from-them] [--asc] [--limit N] [--after DATE] [--before DATE]`
-- `wacli-reader messages search <query> [--chat JID] [--from JID] [--has-media] [--type text|image|video|audio|document]`
+- `wacli-reader messages list [--chat JID] [--sender JID] [--from-me|--from-them] [--asc] [--limit N] [--after DATE] [--before DATE] [--forwarded] [--starred]`
+- `wacli-reader messages search <query> [--chat JID] [--from JID] [--has-media] [--type text|image|video|audio|document] [--forwarded] [--starred]`
+- `wacli-reader messages starred [--chat JID] [--limit N] [--after DATE] [--before DATE] [--asc]`
 - `wacli-reader messages show --chat JID --id MSG_ID`
 - `wacli-reader messages context --chat JID --id MSG_ID [--before N] [--after N]`
+- `wacli-reader messages export [--chat JID] [--limit N] [--after DATE] [--before DATE] [--output PATH]`
+- `wacli-reader calls list [--chat JID] [--limit N] [--after DATE] [--before DATE] [--asc]`
+- `wacli-reader polls list [--chat JID] [--limit N]`
+- `wacli-reader poll show --chat JID --id MSG_ID`
+- `wacli-reader store stats`
 - `wacli-reader doctor`
 - `wacli-reader version`
 - `wacli-reader help`, `wacli-reader completion <shell>` (cobra built-ins)
 
 ## Storage and concurrency
 
-By default `wacli-reader` resolves the same store directory as upstream `wacli` (`~/.local/state/wacli` on Linux, `~/.wacli` elsewhere), so it transparently reads whatever the writer has populated. It opens `wacli.db` with `mode=ro` and never acquires the upstream writer's `LOCK` file, so it is safe to run while `wacli sync --follow` is writing. SQLite's WAL mode (configured by the writer) lets readers see a consistent snapshot at every query without blocking the writer.
+By default `wacli-reader` resolves the same store directory as upstream `wacli` (`~/.local/state/wacli` on Linux, `~/.wacli` elsewhere), so it transparently reads whatever the writer has populated. It opens `wacli.db` with `mode=ro&_query_only=1` (and adds `immutable=1` only when no WAL/SHM sidecars exist next to the DB, e.g. on a truly read-only filesystem) and never acquires the upstream writer's `LOCK` file, so it is safe to run while `wacli sync --follow` is writing. SQLite's WAL mode (configured by the writer) lets readers see a consistent snapshot at every query without blocking the writer, and fresh WAL commits become visible on each new query.
 
 `wacli-reader` does not create the store directory, run schema migrations, or chmod database files — those are the writer's responsibility.
 
