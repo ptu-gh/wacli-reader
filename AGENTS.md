@@ -24,7 +24,7 @@
 - **FTS5**: requires `-tags sqlite_fts5` at build time. The `wacli-reader` binary always builds with this tag.
 - **Concurrency with upstream writer**: SQLite WAL (set by the upstream writer) lets `wacli-reader` read while `wacli sync --follow` writes. The reader does not acquire the writer's `LOCK` file.
 - **Store path precedence**: `--store` flag → `WACLI_STORE_DIR` env → XDG `~/.local/state/wacli` on Linux (legacy `~/.wacli` fallback) → `~/.wacli` elsewhere. Unchanged from upstream so the reader and writer share one store by default.
-- **Version**: the fork has its own version line (currently `0.0.1`) recorded in `cmd/wacli/root.go` and surfaced by `wacli-reader version` and `wacli-reader --version`. The upstream fork point is recorded in `CHANGELOG.md` only.
+- **Version**: the fork has its own version line (currently `0.0.2`) recorded in `cmd/wacli/root.go` and surfaced by `wacli-reader version` and `wacli-reader --version`. The upstream fork point is recorded in `CHANGELOG.md` only.
 
 ## Build, Test, and Development Commands
 - Build: `pnpm build` — compiles with `-tags sqlite_fts5` and `CGO_CFLAGS=-Wno-error=missing-braces` (required for GCC 15+). Output: `dist/wacli-reader`.
@@ -57,7 +57,7 @@ When pulling upstream changes:
 2. Re-apply rename touchpoints if upstream changed them: `cobra.Command.Use` (`wacli-reader`), `SetVersionTemplate` template, the `version` constant in `cmd/wacli/root.go`, the `version` subcommand printf in `cmd/wacli/version.go`, the binary name in `package.json` scripts and both `.goreleaser*.yaml` files, and the `name` field in `package.json`.
 3. If upstream changes `store.Open`, `init`, or migrations: keep upstream's version. The fork's `OpenReadOnly` is purely additive and does not depend on the migration path.
 4. If upstream removes a write helper that `wacli-reader` does not call: take the removal.
-5. After resolving conflicts, run the full gate locally and confirm `wacli-reader version` still prints `0.0.1` (or whatever the fork's current version is).
+5. After resolving conflicts, run the full gate locally and confirm `wacli-reader version` still prints `0.0.2` (or whatever the fork's current version is).
 
 ## Commit & Pull Request Guidelines
 - Follow Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `security:`, `ci:` with an imperative summary.

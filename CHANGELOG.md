@@ -5,7 +5,7 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 `wacli-reader` carries its own version history, independent of the upstream
 [`wacli`](https://github.com/steipete/wacli) version it was forked from.
 
-## [Unreleased] — track upstream openclaw/wacli to v0.9.2
+## [0.0.2] — 2026-05-20 — track upstream openclaw/wacli to v0.9.2
 
 Rebases the fork onto upstream [`openclaw/wacli`](https://github.com/openclaw/wacli) `v0.9.2`. The fork remains read-only by construction; nothing from upstream's write paths is shipped.
 

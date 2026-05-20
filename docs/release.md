@@ -11,7 +11,7 @@ To cut a release:
    - `git push origin vX.Y.Z`
 2. Wait for the GitHub Actions “release” workflow to publish the release artifacts.
 
-To re-release an existing tag, run the workflow manually and pass the tag (e.g. `v0.0.1`).
+To re-release an existing tag, run the workflow manually and pass the tag (e.g. `v0.0.2`).
 
 Expected macOS artifact name:
 
