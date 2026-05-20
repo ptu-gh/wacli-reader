@@ -1,62 +1,41 @@
 package store
 
 import (
-	"database/sql"
 	"time"
+
+	"github.com/openclaw/wacli/internal/store/storedb"
 )
 
 func (d *DB) GetMediaDownloadInfo(chatJID, msgID string) (MediaDownloadInfo, error) {
-	row := d.sql.QueryRow(`
-		SELECT m.chat_jid,
-		       COALESCE(c.name,''),
-		       m.msg_id,
-		       COALESCE(m.media_type,''),
-		       COALESCE(m.filename,''),
-		       COALESCE(m.mime_type,''),
-		       COALESCE(m.direct_path,''),
-		       m.media_key,
-		       m.file_sha256,
-		       m.file_enc_sha256,
-		       COALESCE(m.file_length,0),
-		       COALESCE(m.local_path,''),
-		       COALESCE(m.downloaded_at,0)
-		FROM messages m
-		LEFT JOIN chats c ON c.jid = m.chat_jid
-		WHERE m.chat_jid = ? AND m.msg_id = ?
-	`, chatJID, msgID)
-
-	var info MediaDownloadInfo
-	var fileLen sql.NullInt64
-	var downloadedAt int64
-	if err := row.Scan(
-		&info.ChatJID,
-		&info.ChatName,
-		&info.MsgID,
-		&info.MediaType,
-		&info.Filename,
-		&info.MimeType,
-		&info.DirectPath,
-		&info.MediaKey,
-		&info.FileSHA256,
-		&info.FileEncSHA256,
-		&fileLen,
-		&info.LocalPath,
-		&downloadedAt,
-	); err != nil {
+	row, err := d.q.GetMediaDownloadInfo(storeCtx(), storedb.GetMediaDownloadInfoParams{ChatJid: chatJID, MsgID: msgID})
+	if err != nil {
 		return MediaDownloadInfo{}, err
 	}
-	if fileLen.Valid && fileLen.Int64 > 0 {
-		info.FileLength = uint64(fileLen.Int64)
+	info := MediaDownloadInfo{
+		ChatJID:       row.ChatJid,
+		ChatName:      row.Name,
+		MsgID:         row.MsgID,
+		MediaType:     row.MediaType,
+		Filename:      row.Filename,
+		MimeType:      row.MimeType,
+		DirectPath:    row.DirectPath,
+		MediaKey:      row.MediaKey,
+		FileSHA256:    row.FileSha256,
+		FileEncSHA256: row.FileEncSha256,
+		LocalPath:     row.LocalPath,
+		DownloadedAt:  fromUnix(row.DownloadedAt),
 	}
-	info.DownloadedAt = fromUnix(downloadedAt)
+	if row.FileLength > 0 {
+		info.FileLength = uint64(row.FileLength)
+	}
 	return info, nil
 }
 
 func (d *DB) MarkMediaDownloaded(chatJID, msgID, localPath string, downloadedAt time.Time) error {
-	_, err := d.sql.Exec(`
-		UPDATE messages
-		SET local_path = ?, downloaded_at = ?
-		WHERE chat_jid = ? AND msg_id = ?
-	`, localPath, unix(downloadedAt), chatJID, msgID)
-	return err
+	return d.q.MarkMediaDownloaded(storeCtx(), storedb.MarkMediaDownloadedParams{
+		LocalPath:    nullStringIfEmpty(localPath),
+		DownloadedAt: sqlNullInt64(unix(downloadedAt)),
+		ChatJid:      chatJID,
+		MsgID:        msgID,
+	})
 }

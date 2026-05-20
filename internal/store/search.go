@@ -7,14 +7,17 @@ import (
 )
 
 type SearchMessagesParams struct {
-	Query    string
-	ChatJID  string
-	From     string
-	Limit    int
-	Before   *time.Time
-	After    *time.Time
-	HasMedia bool
-	Type     string
+	Query     string
+	ChatJID   string
+	ChatJIDs  []string
+	From      string
+	Limit     int
+	Before    *time.Time
+	After     *time.Time
+	HasMedia  bool
+	Type      string
+	Forwarded bool
+	Starred   bool
 }
 
 func (d *DB) SearchMessages(p SearchMessagesParams) ([]Message, error) {
@@ -53,10 +56,11 @@ func likeContains(s string) string {
 
 func (d *DB) searchLIKE(p SearchMessagesParams) ([]Message, error) {
 	query := `
-		SELECT m.rowid, m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.display_text,''), COALESCE(m.media_type,''), COALESCE(m.local_path,''), ''
+		SELECT ` + messageSelectColumns("") + `
 		FROM messages m
 		LEFT JOIN chats c ON c.jid = m.chat_jid
-	WHERE (LOWER(m.text) LIKE LOWER(?) ESCAPE '\' OR LOWER(m.display_text) LIKE LOWER(?) ESCAPE '\' OR LOWER(m.media_caption) LIKE LOWER(?) ESCAPE '\' OR LOWER(m.filename) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(m.chat_name,'')) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(m.sender_name,'')) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(c.name,'')) LIKE LOWER(?) ESCAPE '\')`
+		LEFT JOIN starred s ON s.chat_jid = m.chat_jid AND s.msg_id = m.msg_id
+	WHERE m.revoked = 0 AND m.deleted_for_me = 0 AND (LOWER(m.text) LIKE LOWER(?) ESCAPE '\' OR LOWER(m.display_text) LIKE LOWER(?) ESCAPE '\' OR LOWER(m.media_caption) LIKE LOWER(?) ESCAPE '\' OR LOWER(m.filename) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(m.chat_name,'')) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(m.sender_name,'')) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(c.name,'')) LIKE LOWER(?) ESCAPE '\')`
 	// Escape wildcards before wrapping in % so user input is literal (#56).
 	needle := likeContains(p.Query)
 	args := []interface{}{needle, needle, needle, needle, needle, needle, needle}
@@ -86,12 +90,12 @@ func sanitizeFTSQuery(q string) string {
 
 func (d *DB) searchFTS(p SearchMessagesParams) ([]Message, error) {
 	query := `
-		SELECT m.rowid, m.chat_jid, COALESCE(c.name,''), m.msg_id, COALESCE(m.sender_jid,''), m.ts, m.from_me, COALESCE(m.text,''), COALESCE(m.display_text,''), COALESCE(m.media_type,''), COALESCE(m.local_path,''),
-		       snippet(messages_fts, 0, '[', ']', '…', 12)
+		SELECT ` + messageSelectColumns("snippet(messages_fts, 0, '[', ']', '…', 12)") + `
 		FROM messages_fts
 		JOIN messages m ON messages_fts.rowid = m.rowid
 		LEFT JOIN chats c ON c.jid = m.chat_jid
-		WHERE messages_fts MATCH ?`
+		LEFT JOIN starred s ON s.chat_jid = m.chat_jid AND s.msg_id = m.msg_id
+		WHERE messages_fts MATCH ? AND m.revoked = 0 AND m.deleted_for_me = 0`
 	// Sanitize to prevent FTS5 query-syntax injection (#57).
 	// Each token is individually quoted so multi-word queries still work
 	// as implicit AND (both words present, any order).
@@ -103,10 +107,7 @@ func (d *DB) searchFTS(p SearchMessagesParams) ([]Message, error) {
 }
 
 func applyMessageFilters(query string, args []interface{}, p SearchMessagesParams) (string, []interface{}) {
-	if strings.TrimSpace(p.ChatJID) != "" {
-		query += " AND m.chat_jid = ?"
-		args = append(args, p.ChatJID)
-	}
+	query, args = appendStringFilter(query, args, "m.chat_jid", p.ChatJID, p.ChatJIDs)
 	if strings.TrimSpace(p.From) != "" {
 		query += " AND m.sender_jid = ?"
 		args = append(args, p.From)
@@ -121,6 +122,12 @@ func applyMessageFilters(query string, args []interface{}, p SearchMessagesParam
 	}
 	if p.HasMedia {
 		query += " AND COALESCE(m.media_type,'') != ''"
+	}
+	if p.Forwarded {
+		query += " AND m.is_forwarded = 1"
+	}
+	if p.Starred {
+		query += " AND s.msg_id IS NOT NULL"
 	}
 	if msgType := normalizedMessageType(p.Type); msgType != "" {
 		if msgType == "text" {

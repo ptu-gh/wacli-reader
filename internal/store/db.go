@@ -3,21 +3,32 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/openclaw/wacli/internal/fsutil"
 	"github.com/openclaw/wacli/internal/sqliteutil"
+	"github.com/openclaw/wacli/internal/store/storedb"
 )
 
 type DB struct {
 	path       string
 	sql        *sql.DB
+	q          *storedb.Queries
 	ftsEnabled bool
 }
 
 func Open(path string) (*DB, error) {
+	return open(path, false)
+}
+
+func OpenReadOnly(path string) (*DB, error) {
+	return open(path, true)
+}
+
+func open(path string, readOnly bool) (*DB, error) {
 	if strings.TrimSpace(path) == "" {
 		return nil, fmt.Errorf("db path is required")
 	}
@@ -25,16 +36,28 @@ func Open(path string) (*DB, error) {
 	if strings.ContainsAny(path, "?#") {
 		return nil, fmt.Errorf("db path must not contain '?' or '#'")
 	}
-	if err := fsutil.EnsurePrivateDir(filepath.Dir(path)); err != nil {
+	if readOnly {
+		if _, err := os.Stat(path); err != nil {
+			return nil, err
+		}
+	} else if err := fsutil.EnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?_foreign_keys=on&_busy_timeout=5000", path))
+	db, err := sql.Open("sqlite3", sqliteURI(path, readOnly))
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	s := &DB{path: path, sql: db}
+	s := &DB{path: path, sql: db, q: storedb.New(db)}
+	if readOnly {
+		if err := s.validateReadable(); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("open read-only sqlite: %w", err)
+		}
+		s.ftsEnabled = s.detectMessagesFTS()
+		return s, nil
+	}
 	if err := s.init(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -46,39 +69,29 @@ func Open(path string) (*DB, error) {
 	return s, nil
 }
 
-// OpenReadOnly opens an existing wacli.db without ever writing to it or to its
-// containing directory. The returned *DB rejects every write attempt at the
-// SQLite-driver layer with "attempt to write a readonly database". Migrations
-// are not run; the caller is expected to read a database that upstream wacli
-// has already created and migrated.
-//
-// We use SQLite's `immutable=1` URI flag rather than `mode=ro`. `mode=ro` only
-// gates SQL-level writes; in WAL journal mode SQLite still tries to create a
-// `<db>-shm` shared-memory file (and acquire byte-range locks) in the database
-// directory, which fails when the process has only read permissions on the
-// directory or the filesystem is mounted read-only. `immutable=1` tells SQLite
-// the database file cannot change while we hold it open, which causes SQLite
-// to skip WAL/-shm/locking entirely. The reader sees a snapshot taken at open
-// time; any messages the upstream writer commits to the WAL after we open are
-// invisible to this connection. Because wacli-reader is invoked per query,
-// each command picks up whatever the writer has checkpointed into the main
-// database file at invocation time, which is the right trade-off for a CLI.
-func OpenReadOnly(path string) (*DB, error) {
-	if strings.TrimSpace(path) == "" {
-		return nil, fmt.Errorf("db path is required")
-	}
-	if strings.ContainsAny(path, "?#") {
-		return nil, fmt.Errorf("db path must not contain '?' or '#'")
-	}
+func (d *DB) validateReadable() error {
+	var n int
+	return d.sql.QueryRow("SELECT count(*) FROM sqlite_master").Scan(&n)
+}
 
-	db, err := sql.Open("sqlite3", fmt.Sprintf("file:%s?immutable=1&_foreign_keys=on&_busy_timeout=5000", path))
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite read-only: %w", err)
+func sqliteURI(path string, readOnly bool) string {
+	params := "_foreign_keys=on&_busy_timeout=5000"
+	if readOnly {
+		params += "&mode=ro&_query_only=1"
+		if !sqliteSidecarsExist(path) {
+			params += "&immutable=1"
+		}
 	}
+	return fmt.Sprintf("file:%s?%s", path, params)
+}
 
-	s := &DB{path: path, sql: db}
-	s.ftsEnabled = s.detectMessagesFTS()
-	return s, nil
+func sqliteSidecarsExist(path string) bool {
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		if _, err := os.Stat(path + suffix); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *DB) Close() error {

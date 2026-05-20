@@ -3,6 +3,8 @@ package store
 import (
 	"fmt"
 	"strings"
+
+	"github.com/openclaw/wacli/internal/store/storedb"
 )
 
 func (d *DB) SearchContacts(query string, limit int) ([]Contact, error) {
@@ -16,15 +18,23 @@ func (d *DB) SearchContacts(query string, limit int) ([]Contact, error) {
 		SELECT c.jid,
 		       COALESCE(c.phone,''),
 		       COALESCE(NULLIF(a.alias,''), ''),
-		       COALESCE(NULLIF(c.full_name,''), NULLIF(c.push_name,''), NULLIF(c.business_name,''), NULLIF(c.first_name,''), ''),
+		       COALESCE(NULLIF(c.system_name,''), ''),
+		       COALESCE(NULLIF(a.alias,''), NULLIF(c.system_name,''), NULLIF(c.full_name,''), NULLIF(c.push_name,''), NULLIF(c.business_name,''), NULLIF(c.first_name,''), ''),
 		       c.updated_at
 		FROM contacts c
 		LEFT JOIN contact_aliases a ON a.jid = c.jid
-		WHERE LOWER(COALESCE(a.alias,'')) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(c.full_name,'')) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(c.push_name,'')) LIKE LOWER(?) ESCAPE '\' OR LOWER(COALESCE(c.phone,'')) LIKE LOWER(?) ESCAPE '\' OR LOWER(c.jid) LIKE LOWER(?) ESCAPE '\'
-		ORDER BY COALESCE(NULLIF(a.alias,''), NULLIF(c.full_name,''), NULLIF(c.push_name,''), c.jid)
+		WHERE LOWER(COALESCE(a.alias,'')) LIKE LOWER(?) ESCAPE '\'
+		   OR LOWER(COALESCE(c.system_name,'')) LIKE LOWER(?) ESCAPE '\'
+		   OR LOWER(COALESCE(c.full_name,'')) LIKE LOWER(?) ESCAPE '\'
+		   OR LOWER(COALESCE(c.push_name,'')) LIKE LOWER(?) ESCAPE '\'
+		   OR LOWER(COALESCE(c.first_name,'')) LIKE LOWER(?) ESCAPE '\'
+		   OR LOWER(COALESCE(c.business_name,'')) LIKE LOWER(?) ESCAPE '\'
+		   OR LOWER(COALESCE(c.phone,'')) LIKE LOWER(?) ESCAPE '\'
+		   OR LOWER(c.jid) LIKE LOWER(?) ESCAPE '\'
+		ORDER BY COALESCE(NULLIF(a.alias,''), NULLIF(c.system_name,''), NULLIF(c.full_name,''), NULLIF(c.push_name,''), NULLIF(c.business_name,''), NULLIF(c.first_name,''), c.jid)
 		LIMIT ?`
 	needle := likeContains(query)
-	rows, err := d.sql.Query(q, needle, needle, needle, needle, needle, limit)
+	rows, err := d.sql.Query(q, needle, needle, needle, needle, needle, needle, needle, needle, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +44,7 @@ func (d *DB) SearchContacts(query string, limit int) ([]Contact, error) {
 	for rows.Next() {
 		var c Contact
 		var updated int64
-		if err := rows.Scan(&c.JID, &c.Phone, &c.Alias, &c.Name, &updated); err != nil {
+		if err := rows.Scan(&c.JID, &c.Phone, &c.Alias, &c.SystemName, &c.Name, &updated); err != nil {
 			return nil, err
 		}
 		c.UpdatedAt = fromUnix(updated)
@@ -43,60 +53,78 @@ func (d *DB) SearchContacts(query string, limit int) ([]Contact, error) {
 	return out, rows.Err()
 }
 
+func (d *DB) ListContacts(limit int) ([]Contact, error) {
+	if limit <= 0 {
+		limit = 100000
+	}
+	rows, err := d.q.ListContacts(storeCtx(), int64(limit))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Contact, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, contactFromListRow(row))
+	}
+	return out, nil
+}
+
 func (d *DB) GetContact(jid string) (Contact, error) {
-	row := d.sql.QueryRow(`
-		SELECT c.jid,
-		       COALESCE(c.phone,''),
-		       COALESCE(NULLIF(a.alias,''), ''),
-		       COALESCE(NULLIF(c.full_name,''), NULLIF(c.push_name,''), NULLIF(c.business_name,''), NULLIF(c.first_name,''), ''),
-		       c.updated_at
-		FROM contacts c
-		LEFT JOIN contact_aliases a ON a.jid = c.jid
-		WHERE c.jid = ?
-	`, jid)
-	var c Contact
-	var updated int64
-	if err := row.Scan(&c.JID, &c.Phone, &c.Alias, &c.Name, &updated); err != nil {
+	row, err := d.q.GetContact(storeCtx(), jid)
+	if err != nil {
 		return Contact{}, err
 	}
-	c.UpdatedAt = fromUnix(updated)
+	c := contactFromGetRow(row)
 	tags, _ := d.ListTags(jid)
 	c.Tags = tags
 	return c, nil
 }
 
-func (d *DB) ListTags(jid string) ([]string, error) {
-	rows, err := d.sql.Query(`SELECT tag FROM contact_tags WHERE jid = ? ORDER BY tag`, jid)
+func (d *DB) SetSystemName(jid, systemName string) error {
+	jid = strings.TrimSpace(jid)
+	systemName = strings.TrimSpace(systemName)
+	if jid == "" {
+		return fmt.Errorf("jid is required")
+	}
+	if systemName == "" {
+		return fmt.Errorf("system name is required")
+	}
+	now := nowUTC().Unix()
+	n, err := d.q.SetSystemName(storeCtx(), storedb.SetSystemNameParams{
+		SystemName: nullString(systemName),
+		UpdatedAt:  now,
+		Jid:        jid,
+	})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	defer rows.Close()
+	if n == 0 {
+		return fmt.Errorf("contact not found: %s", jid)
+	}
+	return nil
+}
 
-	var tags []string
-	for rows.Next() {
-		var tag string
-		if err := rows.Scan(&tag); err != nil {
-			return nil, err
-		}
-		tags = append(tags, tag)
-	}
-	return tags, rows.Err()
+func (d *DB) ClearAllSystemNames() (int64, error) {
+	return d.q.ClearAllSystemNames(storeCtx(), nowUTC().Unix())
+}
+
+func (d *DB) CountSystemNames() (int64, error) {
+	return d.q.CountSystemNames(storeCtx())
+}
+
+func (d *DB) ListTags(jid string) ([]string, error) {
+	return d.q.ListTags(storeCtx(), jid)
 }
 
 func (d *DB) UpsertContact(jid, phone, pushName, fullName, firstName, businessName string) error {
-	now := nowUTC().Unix()
-	_, err := d.sql.Exec(`
-		INSERT INTO contacts(jid, phone, push_name, full_name, first_name, business_name, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(jid) DO UPDATE SET
-			phone=COALESCE(NULLIF(excluded.phone,''), contacts.phone),
-			push_name=COALESCE(NULLIF(excluded.push_name,''), contacts.push_name),
-			full_name=COALESCE(NULLIF(excluded.full_name,''), contacts.full_name),
-			first_name=COALESCE(NULLIF(excluded.first_name,''), contacts.first_name),
-			business_name=COALESCE(NULLIF(excluded.business_name,''), contacts.business_name),
-			updated_at=excluded.updated_at
-	`, jid, phone, pushName, fullName, firstName, businessName, now)
-	return err
+	return d.q.UpsertContact(storeCtx(), storedb.UpsertContactParams{
+		Jid:          jid,
+		Phone:        nullString(phone),
+		PushName:     nullString(pushName),
+		FullName:     nullString(fullName),
+		FirstName:    nullString(firstName),
+		BusinessName: nullString(businessName),
+		UpdatedAt:    nowUTC().Unix(),
+	})
 }
 
 func (d *DB) SetAlias(jid, alias string) error {
@@ -104,18 +132,11 @@ func (d *DB) SetAlias(jid, alias string) error {
 	if alias == "" {
 		return fmt.Errorf("alias is required")
 	}
-	now := nowUTC().Unix()
-	_, err := d.sql.Exec(`
-		INSERT INTO contact_aliases(jid, alias, notes, updated_at)
-		VALUES (?, ?, NULL, ?)
-		ON CONFLICT(jid) DO UPDATE SET alias=excluded.alias, updated_at=excluded.updated_at
-	`, jid, alias, now)
-	return err
+	return d.q.SetAlias(storeCtx(), storedb.SetAliasParams{Jid: jid, Alias: alias, UpdatedAt: nowUTC().Unix()})
 }
 
 func (d *DB) RemoveAlias(jid string) error {
-	_, err := d.sql.Exec(`DELETE FROM contact_aliases WHERE jid = ?`, jid)
-	return err
+	return d.q.RemoveAlias(storeCtx(), jid)
 }
 
 func (d *DB) AddTag(jid, tag string) error {
@@ -123,15 +144,31 @@ func (d *DB) AddTag(jid, tag string) error {
 	if tag == "" {
 		return fmt.Errorf("tag is required")
 	}
-	now := nowUTC().Unix()
-	_, err := d.sql.Exec(`
-		INSERT INTO contact_tags(jid, tag, updated_at) VALUES(?, ?, ?)
-		ON CONFLICT(jid, tag) DO UPDATE SET updated_at=excluded.updated_at
-	`, jid, tag, now)
-	return err
+	return d.q.AddTag(storeCtx(), storedb.AddTagParams{Jid: jid, Tag: tag, UpdatedAt: nowUTC().Unix()})
 }
 
 func (d *DB) RemoveTag(jid, tag string) error {
-	_, err := d.sql.Exec(`DELETE FROM contact_tags WHERE jid = ? AND tag = ?`, jid, tag)
-	return err
+	return d.q.RemoveTag(storeCtx(), storedb.RemoveTagParams{Jid: jid, Tag: tag})
+}
+
+func contactFromListRow(row storedb.ListContactsRow) Contact {
+	return Contact{
+		JID:        row.Jid,
+		Phone:      row.Phone,
+		Alias:      sqlString(row.Alias),
+		SystemName: sqlString(row.SystemName),
+		Name:       sqlString(row.Name),
+		UpdatedAt:  fromUnix(row.UpdatedAt),
+	}
+}
+
+func contactFromGetRow(row storedb.GetContactRow) Contact {
+	return Contact{
+		JID:        row.Jid,
+		Phone:      row.Phone,
+		Alias:      sqlString(row.Alias),
+		SystemName: sqlString(row.SystemName),
+		Name:       sqlString(row.Name),
+		UpdatedAt:  fromUnix(row.UpdatedAt),
+	}
 }

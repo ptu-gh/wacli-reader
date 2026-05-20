@@ -9,15 +9,15 @@ type StoreStats struct {
 }
 
 func (d *DB) Stats() (StoreStats, error) {
-	var s StoreStats
-	row := d.sql.QueryRow(`
-		SELECT
-			(SELECT COUNT(*) FROM messages),
-			(SELECT COUNT(*) FROM chats),
-			(SELECT COUNT(*) FROM contacts),
-			(SELECT COUNT(*) FROM groups),
-			COALESCE((SELECT MAX(ts) FROM messages), 0)
-	`)
-	err := row.Scan(&s.Messages, &s.Chats, &s.Contacts, &s.Groups, &s.LastMessageTS)
-	return s, err
+	row, err := d.q.Stats(storeCtx())
+	if err != nil {
+		return StoreStats{}, err
+	}
+	return StoreStats{
+		Messages:      row.Count,
+		Chats:         row.Count_2,
+		Contacts:      row.Count_3,
+		Groups:        row.Count_4,
+		LastMessageTS: sqlInt64(row.Coalesce),
+	}, nil
 }
