@@ -17,6 +17,7 @@ var version = "0.0.2"
 type rootFlags struct {
 	storeDir   string
 	asJSON     bool
+	noJSON     bool
 	fullOutput bool
 	timeout    time.Duration
 }
@@ -33,9 +34,21 @@ func execute(args []string) error {
 	rootCmd.SetVersionTemplate("wacli-reader {{.Version}}\n")
 
 	rootCmd.PersistentFlags().StringVar(&flags.storeDir, "store", "", "store directory (default: $WACLI_STORE_DIR, XDG state dir on Linux, or ~/.wacli)")
-	rootCmd.PersistentFlags().BoolVar(&flags.asJSON, "json", false, "output JSON instead of human-readable text")
+	rootCmd.PersistentFlags().BoolVar(&flags.asJSON, "json", false, "output JSON (default: auto — JSON when stdout is not a TTY)")
+	rootCmd.PersistentFlags().BoolVar(&flags.noJSON, "no-json", false, "force human-readable table output even when stdout is not a TTY")
 	rootCmd.PersistentFlags().BoolVar(&flags.fullOutput, "full", false, "disable truncation in table output")
 	rootCmd.PersistentFlags().DurationVar(&flags.timeout, "timeout", 5*time.Minute, "command timeout")
+
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		switch {
+		case cmd.Flags().Changed("no-json"):
+			flags.asJSON = false
+		case cmd.Flags().Changed("json"):
+			// honour explicit value already in flags.asJSON
+		default:
+			flags.asJSON = !isTTY()
+		}
+	}
 
 	rootCmd.AddCommand(newVersionCmd())
 	rootCmd.AddCommand(newDoctorCmd(&flags))
