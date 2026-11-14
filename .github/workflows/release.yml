@@ -1,47 +1,97 @@
-name: Release
+name: release
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
-      version:
-        description: SemVer to release
+      tag:
+        description: "Tag to (re)release (e.g. v0.1.0)"
         required: true
         type: string
-      dry_run:
-        description: Build and verify without publishing tags or releases
-        required: false
-        default: false
-        type: boolean
 
-permissions: {}
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  release:
-    permissions:
-      actions: read
-      checks: read
-      contents: write
-      pull-requests: write
-      statuses: read
-    uses: openclaw/release-workflows/.github/workflows/release-go-cli.yml@v1
-    with:
-      version: ${{ inputs.version }}
-      dry-run: ${{ inputs.dry_run }}
-      repository-type: openclaw
-      homebrew-tap: openclaw/homebrew-tap
-      homebrew-formula: wacli
-      archive-files: '["LICENSE","README.md"]'
-      checksum-filename: checksums.txt
-      nfpm: disabled
-      split-goreleaser-config: .goreleaser-linux-windows.yaml
-      stable-identifier: org.openclaw.wacli
-      ci-check-events: '["push","pull_request"]'
-      reproducible-rebuild: non-darwin
-      strict-checks: false
-    secrets:
-      MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
-      MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
-      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
-      ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
-      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+  goreleaser-darwin:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: ./.github/actions/setup-ci-env
+        with:
+          go-version-file: go.mod
+
+      - name: Stash GoReleaser config
+        run: cp .goreleaser.yaml /tmp/.goreleaser.yaml
+
+      - name: Checkout release tag
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: git checkout ${{ inputs.tag }}
+
+      - name: GoReleaser (macOS universal)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --config /tmp/.goreleaser.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  goreleaser-linux-windows:
+    runs-on: ubuntu-latest
+    needs: goreleaser-darwin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: ./.github/actions/setup-ci-env
+        with:
+          go-version-file: go.mod
+          apt-packages: "build-essential gcc-aarch64-linux-gnu libc6-dev-arm64-cross mingw-w64"
+
+      - name: Stash GoReleaser config
+        run: cp .goreleaser-linux-windows.yaml /tmp/.goreleaser-linux-windows.yaml
+
+      - name: Checkout release tag
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: git checkout ${{ inputs.tag }}
+
+      - name: GoReleaser (linux/windows)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean --skip=publish --config /tmp/.goreleaser-linux-windows.yaml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "RELEASE_TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+          else
+            echo "RELEASE_TAG=${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
+
+      - name: Upload linux/windows artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            dist/*.tar.gz \
+            dist/*.zip \
+            dist/checksums-linux-windows.txt \
+            --clobber

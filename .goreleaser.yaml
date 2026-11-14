@@ -1,43 +1,43 @@
 version: 2
 
-project_name: wacli
+project_name: wacli-reader
 
 builds:
-  - id: wacli
+  - id: wacli-reader
     main: ./cmd/wacli
-    binary: wacli
+    binary: wacli-reader
     env:
       - CGO_ENABLED=1
-      - MACOSX_DEPLOYMENT_TARGET=15.0
     flags:
       - -trimpath
     tags:
       - sqlite_fts5
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.releaseLinkerSetting=wacli-release-linker-version=[{{.Version}}]
+      - -s -w -X main.version={{.Version}}
     goos:
       - darwin
     goarch:
       - amd64
       - arm64
-    hooks:
-      post: bash scripts/check-macos-minimum.sh "{{ .Path }}"
+
+universal_binaries:
+  - id: wacli-reader
+    ids:
+      - wacli-reader
+    name_template: wacli-reader
+    replace: true
 
 archives:
   - id: default
-    formats:
-      - tar.gz
+    format: tar.gz
     name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}
+      {{ .ProjectName }}-{{ if eq .Os "darwin" }}macos{{ else }}{{ .Os }}{{ end }}-{{ if eq .Arch "all" }}universal{{ else }}{{ .Arch }}{{ end }}
     files:
       - LICENSE
       - README.md
 
 checksum:
   name_template: checksums.txt
-
-release:
-  mode: replace
 
 changelog:
   sort: asc

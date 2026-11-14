@@ -4,15 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"math"
-	"os"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/openclaw/wacli/internal/app"
+	types "github.com/openclaw/wacli/internal/jid"
 	"github.com/openclaw/wacli/internal/store"
-	"go.mau.fi/whatsmeow/types"
 )
 
 type contactDisplay struct {
@@ -104,14 +102,12 @@ func getContactForDisplay(ctx context.Context, a *app.App, rawJID string) (store
 	return store.Contact{}, sql.ErrNoRows
 }
 
+// contactReadResolver keeps upstream's signature. Upstream returns a
+// session.db-backed resolver when session.db exists; wacli-reader never opens
+// session.db, so it always takes upstream's no-session path: a nil resolver,
+// which every caller below already handles.
 func contactReadResolver(a *app.App) (app.LocalResolver, error) {
-	if _, err := os.Stat(filepath.Join(a.StoreDir(), "session.db")); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return a.ReadOnlyResolver()
+	return nil, nil
 }
 
 func resolveContactReadJID(ctx context.Context, resolver app.LocalResolver, rawJID string) string {

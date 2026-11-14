@@ -1,16 +1,17 @@
 package main
 
+// Read-only slice of upstream's cmd/wacli/accounts.go. Upstream's file also
+// defines `accounts add` (which runs a full auth flow), `accounts use`, and
+// `accounts remove` — all of which write config.yaml and are deliberately not
+// shipped here. Everything below is copied verbatim so a future rebase diffs
+// cleanly. These commands read config.yaml only; they never open a store.
+
 import (
-	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
-	"time"
 
 	"github.com/openclaw/wacli/internal/config"
-	"github.com/openclaw/wacli/internal/fsutil"
-	"github.com/openclaw/wacli/internal/lock"
 	"github.com/openclaw/wacli/internal/out"
 	"github.com/spf13/cobra"
 )
@@ -26,13 +27,10 @@ type accountPayload struct {
 func newAccountsCmd(flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "accounts",
-		Short: "Manage named WhatsApp accounts",
+		Short: "Inspect named WhatsApp accounts",
 	}
 	cmd.AddCommand(newAccountsListCmd(flags))
-	cmd.AddCommand(newAccountsAddCmd(flags))
-	cmd.AddCommand(newAccountsUseCmd(flags))
 	cmd.AddCommand(newAccountsShowCmd(flags))
-	cmd.AddCommand(newAccountsRemoveCmd(flags))
 	return cmd
 }
 
@@ -56,7 +54,7 @@ func newAccountsListCmd(flags *rootFlags) *cobra.Command {
 				})
 			}
 			if len(accounts) == 0 {
-				fmt.Fprintln(os.Stdout, "No accounts configured. Run `wacli accounts add personal`.")
+				fmt.Fprintln(os.Stdout, "No accounts configured. Upstream wacli creates them with `wacli accounts add`.")
 				return nil
 			}
 			w := newTableWriter(os.Stdout)
@@ -66,136 +64,9 @@ func newAccountsListCmd(flags *rootFlags) *cobra.Command {
 				if account.Default {
 					mark = "*"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\n", mark, account.Name, account.StoreDir)
+				fmt.Fprintf(w, "%s\t%s\t%s\n", mark, sanitize(account.Name), sanitize(account.StoreDir))
 			}
 			_ = w.Flush()
-			return nil
-		},
-	}
-}
-
-func newAccountsAddCmd(flags *rootFlags) *cobra.Command {
-	opts := authOptions{idleExit: 30 * time.Second, qrFormat: "terminal"}
-	var noAuth bool
-	cmd := &cobra.Command{
-		Use:   "add NAME",
-		Short: "Add an account and authenticate it",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := flags.requireWritable(); err != nil {
-				return err
-			}
-			name := args[0]
-			if err := config.ValidateAccountName(name); err != nil {
-				return err
-			}
-			if !noAuth {
-				if _, err := validateAuthOptions(flags, opts); err != nil {
-					return err
-				}
-			}
-			path := config.DefaultConfigPath()
-			var added config.Account
-			if err := withAccountsConfigLock(path, flags, func() error {
-				cfg, _, err := config.LoadAccountsConfigIfExists(path)
-				if err != nil {
-					return err
-				}
-				if _, ok := cfg.Accounts[name]; ok {
-					return fmt.Errorf("account %q already exists", name)
-				}
-				cfg.Accounts[name] = config.AccountEntry{Store: config.DefaultAccountStore(name)}
-				if cfg.DefaultAccount == "" {
-					cfg.DefaultAccount = name
-				}
-				storeDir := config.ListAccounts(path, cfg)
-				for _, account := range storeDir {
-					if account.Name == name {
-						added = account
-						break
-					}
-				}
-				if err := fsutil.EnsurePrivateDir(added.StoreDir); err != nil {
-					return fmt.Errorf("create account store: %w", err)
-				}
-				return config.SaveAccountsConfig(path, cfg)
-			}); err != nil {
-				return err
-			}
-			if noAuth {
-				if flags.asJSON {
-					return out.WriteJSON(os.Stdout, map[string]any{
-						"config_path": path,
-						"account":     accountPayloadFromAccount(added),
-					})
-				}
-				fmt.Fprintf(os.Stdout, "Account %s added at %s. Run `wacli --account %s auth` to authenticate.\n", name, added.StoreDir, name)
-				return nil
-			}
-
-			oldAccount := flags.account
-			oldStore := flags.storeDir
-			flags.account = name
-			flags.storeDir = ""
-			defer func() {
-				flags.account = oldAccount
-				flags.storeDir = oldStore
-			}()
-
-			if !flags.asJSON {
-				fmt.Fprintf(os.Stdout, "Account %s added at %s\n", name, added.StoreDir)
-			}
-			res, err := runAuth(flags, opts)
-			if err != nil {
-				return err
-			}
-			if flags.asJSON {
-				return out.WriteJSON(os.Stdout, map[string]any{
-					"account":         accountPayloadFromAccount(added),
-					"authenticated":   true,
-					"messages_stored": res.MessagesStored,
-				})
-			}
-			fmt.Fprintf(os.Stdout, "Account %s authenticated. Messages stored: %d\n", name, res.MessagesStored)
-			return nil
-		},
-	}
-	addAuthFlags(cmd, &opts)
-	cmd.Flags().BoolVar(&noAuth, "no-auth", false, "create the account without running auth")
-	return cmd
-}
-
-func newAccountsUseCmd(flags *rootFlags) *cobra.Command {
-	return &cobra.Command{
-		Use:   "use NAME",
-		Short: "Set the default account",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := flags.requireWritable(); err != nil {
-				return err
-			}
-			name := args[0]
-			if err := config.ValidateAccountName(name); err != nil {
-				return err
-			}
-			path := config.DefaultConfigPath()
-			if err := withAccountsConfigLock(path, flags, func() error {
-				cfg, err := config.LoadAccountsConfig(path)
-				if err != nil {
-					return err
-				}
-				if _, ok := cfg.Accounts[name]; !ok {
-					return fmt.Errorf("account %q is not configured", name)
-				}
-				cfg.DefaultAccount = name
-				return config.SaveAccountsConfig(path, cfg)
-			}); err != nil {
-				return err
-			}
-			if flags.asJSON {
-				return out.WriteJSON(os.Stdout, map[string]any{"default_account": name})
-			}
-			fmt.Fprintf(os.Stdout, "Default account: %s\n", name)
 			return nil
 		},
 	}
@@ -215,74 +86,13 @@ func newAccountsShowCmd(flags *rootFlags) *cobra.Command {
 			if flags.asJSON {
 				return out.WriteJSON(os.Stdout, payload)
 			}
-			fmt.Fprintf(os.Stdout, "Name: %s\nStore: %s\nDefault: %t\n", payload.Name, payload.StoreDir, payload.Default)
+			fmt.Fprintf(os.Stdout, "Name: %s\nStore: %s\nDefault: %t\n", sanitize(payload.Name), sanitize(payload.StoreDir), payload.Default)
 			if payload.Label != "" {
-				fmt.Fprintf(os.Stdout, "Label: %s\n", payload.Label)
+				fmt.Fprintf(os.Stdout, "Label: %s\n", sanitize(payload.Label))
 			}
 			return nil
 		},
 	}
-}
-
-func newAccountsRemoveCmd(flags *rootFlags) *cobra.Command {
-	return &cobra.Command{
-		Use:   "remove NAME",
-		Short: "Remove an account from config without deleting its store",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := flags.requireWritable(); err != nil {
-				return err
-			}
-			name := args[0]
-			if err := config.ValidateAccountName(name); err != nil {
-				return err
-			}
-			path := config.DefaultConfigPath()
-			var storeDir string
-			if err := withAccountsConfigLock(path, flags, func() error {
-				cfg, err := config.LoadAccountsConfig(path)
-				if err != nil {
-					return err
-				}
-				entry, ok := cfg.Accounts[name]
-				if !ok {
-					return fmt.Errorf("account %q is not configured", name)
-				}
-				storeDir = config.ListAccounts(path, &config.AccountsConfig{
-					DefaultAccount: cfg.DefaultAccount,
-					Accounts:       map[string]config.AccountEntry{name: entry},
-				})[0].StoreDir
-				delete(cfg.Accounts, name)
-				if cfg.DefaultAccount == name {
-					cfg.DefaultAccount = ""
-				}
-				return config.SaveAccountsConfig(path, cfg)
-			}); err != nil {
-				return err
-			}
-			if flags.asJSON {
-				return out.WriteJSON(os.Stdout, map[string]any{
-					"removed":        name,
-					"store_dir_kept": storeDir,
-				})
-			}
-			fmt.Fprintf(os.Stdout, "Removed account %s. Store kept at %s\n", name, storeDir)
-			return nil
-		},
-	}
-}
-
-func withAccountsConfigLock(path string, flags *rootFlags, fn func() error) error {
-	var wait time.Duration
-	if flags != nil {
-		wait = flags.lockWait
-	}
-	lk, err := lock.AcquireWithTimeout(context.Background(), filepath.Dir(path), wait)
-	if err != nil {
-		return fmt.Errorf("lock account config: %w", err)
-	}
-	defer func() { _ = lk.Release() }()
-	return fn()
 }
 
 func sortedAccounts(path string, cfg *config.AccountsConfig) []config.Account {

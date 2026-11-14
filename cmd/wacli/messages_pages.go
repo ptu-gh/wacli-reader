@@ -5,8 +5,8 @@ import (
 	"fmt"
 
 	"github.com/openclaw/wacli/internal/app"
+	wa "github.com/openclaw/wacli/internal/jid"
 	"github.com/openclaw/wacli/internal/store"
-	"github.com/openclaw/wacli/internal/wa"
 )
 
 type searchHitContext struct {

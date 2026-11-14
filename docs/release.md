@@ -1,31 +1,25 @@
 # Release
 
-Read when: preparing or verifying an official wacli release.
+## GitHub Release Artifacts
 
-wacli uses the fleet-standard reusable Go CLI workflow from `openclaw/release-workflows@v1`. The repository wrapper is intentionally thin: it supplies the wacli artifact contract and maps repository secrets, while the shared workflow owns source freezing, the annotated tag, builds, signing, notarization, independent verification, publication, Homebrew handoff, and changelog closeout.
+`wacli-reader` uses GoReleaser (`.goreleaser.yaml` for macOS, `.goreleaser-linux-windows.yaml` for linux/windows) and the GitHub Actions workflow `.github/workflows/release.yml`.
 
-## Release contract
+To cut a release:
 
-- Dispatch `.github/workflows/release.yml` from the protected default branch with the version to release.
-- `CHANGELOG.md` must contain exactly one dated level-two section for that version, and `cmd/wacli/root.go` must already report it.
-- The canonical GoReleaser config builds the Darwin CGO binaries on macOS.
-- `.goreleaser-linux-windows.yaml` builds Linux amd64/arm64 and Windows amd64 with the fixed cross-compilers supplied by the shared workflow.
-- `LICENSE` and `README.md` are preserved in every archive, and the published checksum asset remains `checksums.txt`.
-- Official Darwin archives target macOS 15.0 (Sequoia) or newer on both architectures; verify `LC_BUILD_VERSION` for each published binary.
-- The Darwin GoReleaser post-build hook checks each Mach-O slice with `otool` and rejects any minimum other than macOS 15.0 before signing or publication. Recheck downloaded binaries with `bash scripts/check-macos-minimum.sh <binary>`.
-- Every Darwin binary retains the established `org.openclaw.wacli` identifier and OpenClaw Foundation Developer ID identity.
-- The independent rebuild must reproduce every staged Linux and Windows binary byte-for-byte before publication.
-- Build and verification use the exact preferred `toolchain` from the frozen commit's `go.mod` (currently Go 1.27.4); the `go` directive remains the Go 1.27.0 source minimum. Historical commits without a `toolchain` directive use their exact `go` version.
-- The published release must hand off exact verified assets to `openclaw/homebrew-tap`. Keep an empty `Unreleased` section above the dated release notes; if that section is absent, the workflow opens a closeout PR to restore it. Closeout does not bump the source version.
+1. Tag and push:
+   - `git tag vX.Y.Z`
+   - `git push origin vX.Y.Z`
+2. Wait for the GitHub Actions “release” workflow to publish the release artifacts.
 
-## Dispatch
+To re-release an existing tag, run the workflow manually and pass the tag (e.g. `v0.0.2`).
 
-```bash
-gh workflow run release.yml --repo openclaw/wacli --ref main -f version=0.20.0
-```
+Expected macOS artifact name:
 
-Watch the exact run through completion. A successful run is not sufficient on its own: verify the public release is non-draft and non-prerelease, its tag peels to the frozen protected-main commit, every expected asset is present, `checksums.txt` validates the downloaded assets, both native macOS verifier jobs passed, the Homebrew update run succeeded, and the empty `Unreleased` section is present. If a closeout PR was needed, merge it after its checks pass.
+- `wacli-reader-macos-universal.tar.gz`
 
-Retries reuse the immutable annotated version tag and its frozen commit. Never move or replace a consumer release tag to recover from a failed run; fix the shared workflow or caller on `main`, then dispatch the same version again.
+Other artifacts:
 
-For a nonpublishing verification after dependency or toolchain updates, dispatch Release on `main` with the current version and `dry_run=true`. The shared workflow builds and verifies artifacts without creating tags or releases.
+- `wacli-reader-linux-<arch>.tar.gz`
+- `wacli-reader-windows-<arch>.zip`
+
+Remember to also bump the `version` constant in [`cmd/wacli/root.go`](../cmd/wacli/root.go) so `wacli-reader version` matches the new tag, and add a `## [X.Y.Z]` entry to [`CHANGELOG.md`](../CHANGELOG.md).

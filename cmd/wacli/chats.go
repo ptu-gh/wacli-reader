@@ -6,34 +6,23 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/openclaw/wacli/internal/app"
+	types "github.com/openclaw/wacli/internal/jid"
 	"github.com/openclaw/wacli/internal/out"
 	"github.com/openclaw/wacli/internal/store"
 	"github.com/spf13/cobra"
-	"go.mau.fi/whatsmeow/types"
 )
 
 func newChatsCmd(flags *rootFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "chats",
-		Short: "List and manage chats",
+		Short: "List chats from the local DB",
 	}
 	cmd.AddCommand(newChatsListCmd(flags))
 	cmd.AddCommand(newChatsShowCmd(flags))
-	cmd.AddCommand(newChatsArchiveCmd(flags, true))
-	cmd.AddCommand(newChatsArchiveCmd(flags, false))
-	cmd.AddCommand(newChatsPinCmd(flags, true))
-	cmd.AddCommand(newChatsPinCmd(flags, false))
-	cmd.AddCommand(newChatsMuteCmd(flags))
-	cmd.AddCommand(newChatsUnmuteCmd(flags))
-	cmd.AddCommand(newChatsMarkReadCmd(flags, true))
-	cmd.AddCommand(newChatsMarkReadCmd(flags, false))
-	cmd.AddCommand(newChatsCleanupCmd(flags))
 	return cmd
 }
 
@@ -95,7 +84,7 @@ func newChatsListCmd(flags *rootFlags) *cobra.Command {
 				if name == "" {
 					name = c.JID
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", c.Kind, tableCell(name, 28, fullOutput), c.JID, c.LastMessageTS.Local().Format("2006-01-02 15:04:05"), chatFlagsString(c))
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", sanitize(c.Kind), tableCell(name, 28, fullOutput), sanitize(c.JID), c.LastMessageTS.Local().Format("2006-01-02 15:04:05"), chatFlagsString(c))
 			}
 			_ = w.Flush()
 			return nil
@@ -148,105 +137,12 @@ func newChatsShowCmd(flags *rootFlags) *cobra.Command {
 	return cmd
 }
 
-type chatDisplayResolver interface {
-	ResolveChatName(context.Context, types.JID, string) string
-	ResolveLIDToPN(context.Context, types.JID) types.JID
-	ResolvePNToLID(context.Context, types.JID) types.JID
-}
-
+// resolveStoredChats keeps upstream's signature. Upstream rewrites LID-keyed
+// chats to their phone-number JID and name through session.db; wacli-reader
+// never opens session.db, so chats are shown as wacli.db stores them —
+// upstream's own result when session.db is absent.
 func resolveStoredChats(ctx context.Context, a *app.App, chats []store.Chat) []store.Chat {
-	if len(chats) == 0 || !chatsNeedLIDResolution(chats) {
-		return chats
-	}
-	if _, err := os.Stat(filepath.Join(a.StoreDir(), "session.db")); err != nil {
-		return chats
-	}
-	resolver, err := a.LocalResolver()
-	if err != nil {
-		return chats
-	}
-	return resolveStoredChatsWith(ctx, resolver, chats)
-}
-
-func chatsNeedLIDResolution(chats []store.Chat) bool {
-	for _, chat := range chats {
-		if strings.HasSuffix(strings.TrimSpace(chat.JID), "@"+types.HiddenUserServer) {
-			return true
-		}
-	}
-	return false
-}
-
-func resolveStoredChatsWith(ctx context.Context, resolver chatDisplayResolver, chats []store.Chat) []store.Chat {
-	out := make([]store.Chat, 0, len(chats))
-	seen := make(map[string]int, len(chats))
-	for _, chat := range chats {
-		chat = resolveStoredChatWith(ctx, resolver, chat)
-		if idx, ok := seen[chat.JID]; ok {
-			out[idx] = mergeDisplayChats(out[idx], chat)
-			continue
-		}
-		seen[chat.JID] = len(out)
-		out = append(out, chat)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].LastMessageTS.After(out[j].LastMessageTS)
-	})
-	return out
-}
-
-func resolveStoredChatWith(ctx context.Context, resolver chatDisplayResolver, chat store.Chat) store.Chat {
-	jid, err := types.ParseJID(strings.TrimSpace(chat.JID))
-	if err != nil || jid.Server != types.HiddenUserServer {
-		return chat
-	}
-	pn := resolver.ResolveLIDToPN(ctx, jid)
-	if pn.IsEmpty() || pn.Server != types.DefaultUserServer {
-		return chat
-	}
-
-	out := chat
-	out.JID = pn.ToNonAD().String()
-	if out.Kind == "" || out.Kind == "unknown" {
-		out.Kind = "dm"
-	}
-	if chatNameRank(out.Name, chat.JID) < 2 {
-		if name := strings.TrimSpace(resolver.ResolveChatName(ctx, pn, "")); name != "" {
-			out.Name = name
-		}
-	}
-	if strings.TrimSpace(out.Name) == "" || strings.TrimSpace(out.Name) == strings.TrimSpace(chat.JID) {
-		out.Name = out.JID
-	}
-	return out
-}
-
-func mergeDisplayChats(a, b store.Chat) store.Chat {
-	out := a
-	if b.LastMessageTS.After(out.LastMessageTS) {
-		out.LastMessageTS = b.LastMessageTS
-	}
-	if out.Kind == "" || out.Kind == "unknown" || b.Kind == "dm" {
-		out.Kind = b.Kind
-	}
-	if chatNameRank(b.Name, b.JID) > chatNameRank(out.Name, out.JID) {
-		out.Name = b.Name
-	}
-	out.UnreadCount += b.UnreadCount
-	out.Unread = out.Unread || b.Unread || out.UnreadCount > 0
-	return out
-}
-
-func chatNameRank(name, jid string) int {
-	name = strings.TrimSpace(name)
-	switch {
-	case name == "":
-		return 0
-	case name == strings.TrimSpace(jid), strings.Contains(name, "@"):
-		return 1
-	default:
-		return 2
-	}
+	return chats
 }
 
 func getChatForDisplay(ctx context.Context, a *app.App, rawJID string) (store.Chat, error) {
@@ -283,19 +179,7 @@ func mappedChatJIDs(ctx context.Context, a *app.App, rawJID string) []string {
 	if err != nil {
 		return []string{rawJID}
 	}
+	// Upstream adds the PN/LID twin from session.db here; the fork cannot.
 	jids := []types.JID{jid}
-	if _, err := os.Stat(filepath.Join(a.StoreDir(), "session.db")); err != nil {
-		return jidStrings(jids)
-	}
-	resolver, err := a.LocalResolver()
-	if err != nil {
-		return jidStrings(jids)
-	}
-	switch jid.Server {
-	case types.DefaultUserServer:
-		jids = append(jids, resolver.ResolvePNToLID(ctx, jid))
-	case types.HiddenUserServer:
-		jids = append(jids, resolver.ResolveLIDToPN(ctx, jid))
-	}
 	return jidStrings(jids)
 }
