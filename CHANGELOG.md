@@ -5,6 +5,16 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 `wacli-reader` carries its own version history, independent of the upstream
 [`wacli`](https://github.com/steipete/wacli) version it was forked from.
 
+## [Unreleased]
+
+### Changed
+
+- `SKILL.md` is about 40% shorter and tuned against a local 27B model on real questions. Answers are right more often and need fewer tool calls.
+  - Reactions are marked as reactions, so they are no longer reported as the last message.
+  - Media is copied into `/tmp/openclaw/wa/` and attached with a `MEDIA:` line. The copy stays until the next media request, so it still exists when the reply is delivered. The skill no longer points to the `message` tool.
+  - Photos are viewed through OpenClaw's `view_image` action.
+  - The task table gains rows for the last photo from a person and for a topic with the replies around it. The worked example is gone.
+
 ## [0.0.4] — 2026-11-14 — rebuild on upstream openclaw/wacli v0.26.0
 
 Rebuilds the fork on upstream [`openclaw/wacli`](https://github.com/openclaw/wacli) `v0.26.0` (upstream `main` at `2108fe7`), 182 upstream commits past 0.0.3's base. The fork was re-applied on a fresh upstream base rather than replayed commit by commit. It remains read-only by construction; `whatsmeow` is still absent from the module graph and the binary never opens `session.db`.
